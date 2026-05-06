@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+test -x /opt/bambustudio/BambuStudio.AppImage
+test -x /usr/bin/bambustudio
+test -f /usr/share/applications/bambustudio.desktop

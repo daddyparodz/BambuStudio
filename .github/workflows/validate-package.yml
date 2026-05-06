@@ -1,0 +1,47 @@
+name: Validate Packaging
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/**'
+      - 'packaging/**'
+      - 'scripts/**'
+      - 'README.md'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'packaging/**'
+      - 'scripts/**'
+      - 'README.md'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl jq devscripts debhelper dput xz-utils desktop-file-utils xdg-utils lintian
+
+      - name: Check shell syntax
+        run: |
+          bash -n scripts/*.sh scripts/lib/*.sh
+
+      - name: Build source package
+        run: |
+          ./scripts/build-source-package.sh --series "questing"
+
+      - name: Lint generated source package
+        run: |
+          lintian --fail-on error dist/*.dsc dist/*_source.changes
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-package
+          path: dist/

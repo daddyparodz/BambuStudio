@@ -1,0 +1,7 @@
+BambuStudio.AppImage opt/bambustudio/
+bambustudio usr/bin/
+bambustudio.desktop usr/share/applications/
+BambuStudio.png usr/share/pixmaps/
+icons/32x32/apps/BambuStudio.png usr/share/icons/hicolor/32x32/apps/
+icons/128x128/apps/BambuStudio.png usr/share/icons/hicolor/128x128/apps/
+icons/192x192/apps/BambuStudio.png usr/share/icons/hicolor/192x192/apps/

@@ -1,0 +1,12 @@
+build/
+dist/
+tmp/
+*.build
+*.buildinfo
+*.changes
+*.debian.tar.xz
+*.dsc
+*.orig.tar.*
+*.tar.xz
+*.tar.gz
+.pc/

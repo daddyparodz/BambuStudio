@@ -1,0 +1,123 @@
+name: Sync Launchpad PPA
+
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Optional upstream tag to package
+        required: false
+        type: string
+      ppa_revision:
+        description: PPA revision suffix
+        required: false
+        default: '1'
+        type: string
+      upload:
+        description: Upload to Launchpad
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl jq devscripts debhelper dput gnupg xz-utils desktop-file-utils xdg-utils
+
+      - name: Determine upstream tag
+        id: upstream
+        run: |
+          if [[ -n "${{ inputs.release_tag }}" ]]; then
+            tag="${{ inputs.release_tag }}"
+          else
+            tag="$(./scripts/get-latest-release-tag.sh stable)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve workflow settings
+        id: settings
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            upload="${{ inputs.upload }}"
+            revision="${{ inputs.ppa_revision }}"
+          else
+            upload="true"
+            revision="1"
+          fi
+          echo "upload=$upload" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether upload is needed
+        id: state
+        run: |
+          recorded="$(tr -d '\n' < state/latest-stable-tag.txt || true)"
+          force=false
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.release_tag }}" ]]; then
+            force=true
+          fi
+          if [[ "$recorded" == "${{ steps.upstream.outputs.tag }}" && "$force" != "true" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import Launchpad signing key
+        if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
+        env:
+          LAUNCHPAD_GPG_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_GPG_PRIVATE_KEY }}
+          LAUNCHPAD_GPG_FINGERPRINT: ${{ secrets.LAUNCHPAD_GPG_FINGERPRINT }}
+        run: |
+          test -n "$LAUNCHPAD_GPG_PRIVATE_KEY"
+          test -n "$LAUNCHPAD_GPG_FINGERPRINT"
+          export GNUPGHOME="$(mktemp -d)"
+          printf '%s\n' "$LAUNCHPAD_GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "LAUNCHPAD_GPG_FINGERPRINT=$LAUNCHPAD_GPG_FINGERPRINT" >> "$GITHUB_ENV"
+
+      - name: Build source packages
+        if: steps.state.outputs.skip != 'true'
+        env:
+          RELEASE_TAG: ${{ steps.upstream.outputs.tag }}
+          PPA_REVISION: ${{ steps.settings.outputs.revision }}
+          DEBFULLNAME: daddyparodz
+          DEBEMAIL: 45983094+daddyparodz@users.noreply.github.com
+        run: |
+          args=(--release-tag "$RELEASE_TAG" --series "jammy noble questing")
+          if [[ "${{ steps.settings.outputs.upload }}" == "true" ]]; then
+            export DEBSIGN_KEYID="${LAUNCHPAD_GPG_FINGERPRINT}"
+            args+=(--sign)
+          fi
+          ./scripts/build-source-package.sh "${args[@]}"
+
+      - name: Upload to Launchpad
+        if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
+        run: |
+          ./scripts/upload-ppa.sh dist/*_source.changes
+
+      - name: Update packaged release marker
+        if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true' && success() && github.ref == 'refs/heads/main'
+        run: |
+          printf '%s\n' "${{ steps.upstream.outputs.tag }}" > state/latest-stable-tag.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/latest-stable-tag.txt
+          git commit -m "chore: record packaged release ${{ steps.upstream.outputs.tag }}" || exit 0
+          git push
+
+      - name: Upload source package artifacts
+        if: steps.state.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchpad-source-package
+          path: dist/

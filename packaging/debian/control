@@ -1,0 +1,19 @@
+Source: bambustudio
+Section: graphics
+Priority: optional
+Maintainer: daddyparodz <45983094+daddyparodz@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/bambulab/BambuStudio
+Vcs-Browser: https://github.com/daddyparodz/bambustudio
+Vcs-Git: https://github.com/daddyparodz/bambustudio.git
+
+Package: bambustudio
+Architecture: amd64
+Depends: ${misc:Depends}, libfuse2t64 | libfuse2, desktop-file-utils, xdg-utils
+Description: Bambu Studio repackaged from the official Linux AppImage
+ Bambu Studio is slicer software for Bambu Lab and other 3D printers.
+ .
+ This package redistributes the official upstream Linux AppImage and adds
+ desktop integration suitable for Ubuntu systems installed through a PPA.
