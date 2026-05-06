@@ -100,12 +100,13 @@ fi
 
 prepare_source_tree() {
   local series="$1"
-  local asset_url asset_name workspace source_dir package_version ubuntu_series_version launcher_path desktop_path icon_root orig_tarball
+  local asset_url asset_name workspace source_dir package_version ubuntu_series_version series_upstream_version launcher_path desktop_path icon_root orig_tarball
 
   ubuntu_series_version="$(series_version_suffix "$series")"
-  package_version="${VERSION}-0ppa${PPA_REVISION}~${ubuntu_series_version}.1"
+  series_upstream_version="${VERSION}+${series}"
+  package_version="${series_upstream_version}-0ppa${PPA_REVISION}~${ubuntu_series_version}.1"
   workspace="$BUILD_ROOT/$series"
-  source_dir="$workspace/bambustudio-${VERSION}"
+  source_dir="$workspace/bambustudio-${series_upstream_version}"
   mkdir -p "$workspace"
   mkdir -p "$source_dir"
 
@@ -190,9 +191,9 @@ EOF
 
   rm -rf "$source_dir/squashfs-root"
 
-  orig_tarball="$workspace/bambustudio_${VERSION}.orig.tar.xz"
+  orig_tarball="$workspace/bambustudio_${series_upstream_version}.orig.tar.xz"
   rm -f "$orig_tarball"
-  tar --exclude='./debian' -C "$workspace" -cJf "$orig_tarball" "bambustudio-${VERSION}"
+  tar --exclude='./debian' -C "$workspace" -cJf "$orig_tarball" "bambustudio-${series_upstream_version}"
 
   (
     cd "$source_dir"
