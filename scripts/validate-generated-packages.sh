@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DIST_DIR="${1:-$REPO_ROOT/dist}"
 WORK_DIR="${WORK_DIR:-$REPO_ROOT/build/validate}"
+PPA_REVISION="${PPA_REVISION:-1}"
+SOURCE_INCLUDE_MODE="${SOURCE_INCLUDE_MODE:-auto}"
 
 mkdir -p "$WORK_DIR"
 rm -rf "$WORK_DIR"/*
@@ -65,6 +67,14 @@ for changes in "${changes_files[@]}"; do
     test -x debroot/usr/bin/bambustudio
     test -f debroot/usr/share/applications/bambustudio.desktop
   )
+
+  if [[ "$SOURCE_INCLUDE_MODE" == "exclude-orig" ]] || { [[ "$SOURCE_INCLUDE_MODE" == "auto" ]] && (( PPA_REVISION > 1 )); }; then
+    echo "Checking .changes excludes .orig.tar for $pkg_base"
+    if grep -qE '\.orig\.tar\.(gz|bz2|xz|lzma)$' "$changes"; then
+      echo "Found forbidden orig tarball entry in $changes for PPA_REVISION=${PPA_REVISION}" >&2
+      exit 1
+    fi
+  fi
 done
 
 echo "All generated source packages and deb payloads validated."

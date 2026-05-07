@@ -4,6 +4,7 @@ set -euo pipefail
 PPA_TARGET="${PPA_TARGET:-ppa:daddyparodz/bambustudio}"
 UPLOAD_RETRIES="${UPLOAD_RETRIES:-4}"
 RETRY_DELAY_SECONDS="${RETRY_DELAY_SECONDS:-45}"
+PPA_REVISION="${PPA_REVISION:-1}"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <source.changes> [<source.changes> ...]" >&2
@@ -11,6 +12,16 @@ if [[ $# -lt 1 ]]; then
 fi
 
 for changes_file in "$@"; do
+  echo "Pre-upload source check for ${changes_file}"
+  if (( PPA_REVISION > 1 )); then
+    echo "Pre-upload source check: ppa revision > 1, .orig.tar.xz must not be uploaded"
+    if grep -qE '\.orig\.tar\.(gz|bz2|xz|lzma)$' "$changes_file"; then
+      echo "ERROR: ${changes_file} includes .orig.tar.* but PPA_REVISION=${PPA_REVISION}" >&2
+      exit 1
+    fi
+    echo "OK: .changes excludes .orig.tar.xz"
+  fi
+
   echo "Uploading ${changes_file} to ${PPA_TARGET}..."
   attempt=1
   while true; do

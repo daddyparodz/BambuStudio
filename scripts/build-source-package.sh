@@ -13,6 +13,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/dist}"
 BUILD_ROOT="${BUILD_ROOT:-$REPO_ROOT/build}"
 PPA_REVISION="${PPA_REVISION:-1}"
 SIGN_SOURCE="${SIGN_SOURCE:-0}"
+SOURCE_INCLUDE_MODE="${SOURCE_INCLUDE_MODE:-auto}"
 MAINTAINER_NAME="${MAINTAINER_NAME:-daddyparodz}"
 MAINTAINER_EMAIL="${MAINTAINER_EMAIL:-45983094+daddyparodz@users.noreply.github.com}"
 
@@ -27,6 +28,7 @@ Options:
   --output-dir DIR            Directory for generated source package artifacts
   --build-root DIR            Directory for temporary package worktrees
   --ppa-revision N            PPA revision suffix, defaults to 1
+  --source-include-mode MODE  auto|include-orig|exclude-orig (default: auto)
   --sign                      Sign source packages with debuild
 EOF
 }
@@ -57,6 +59,10 @@ while [[ $# -gt 0 ]]; do
       PPA_REVISION="$2"
       shift 2
       ;;
+    --source-include-mode)
+      SOURCE_INCLUDE_MODE="$2"
+      shift 2
+      ;;
     --sign)
       SIGN_SOURCE=1
       shift
@@ -74,6 +80,11 @@ done
 case "$CHANNEL" in
   stable|beta) ;;
   *) die "CHANNEL must be stable or beta" ;;
+esac
+
+case "$SOURCE_INCLUDE_MODE" in
+  auto|include-orig|exclude-orig) ;;
+  *) die "SOURCE_INCLUDE_MODE must be auto, include-orig, or exclude-orig" ;;
 esac
 
 mkdir -p "$OUTPUT_DIR" "$BUILD_ROOT"
@@ -100,7 +111,7 @@ fi
 
 prepare_source_tree() {
   local series="$1"
-  local asset_url asset_name workspace source_dir package_version ubuntu_series_version series_upstream_version launcher_path desktop_path icon_root orig_tarball
+  local asset_url asset_name workspace source_dir package_version ubuntu_series_version series_upstream_version launcher_path desktop_path icon_root orig_tarball debuild_source_args
 
   ubuntu_series_version="$(series_version_suffix "$series")"
   series_upstream_version="${VERSION}+${series}"
@@ -205,17 +216,38 @@ EOF
   rm -f "$orig_tarball"
   tar --exclude='./debian' -C "$workspace" -cJf "$orig_tarball" "bambustudio-${series_upstream_version}"
 
+  debuild_source_args=(-S)
+  case "$SOURCE_INCLUDE_MODE" in
+    include-orig)
+      debuild_source_args+=(-sa)
+      echo "Source include mode: include orig tarball (-sa)"
+      ;;
+    exclude-orig)
+      debuild_source_args+=(-sd)
+      echo "Source include mode: exclude orig tarball from .changes (-sd)"
+      ;;
+    auto)
+      if (( PPA_REVISION > 1 )); then
+        debuild_source_args+=(-sd)
+        echo "Source include mode: exclude orig tarball from .changes (-sd)"
+      else
+        debuild_source_args+=(-sa)
+        echo "Source include mode: include orig tarball (-sa)"
+      fi
+      ;;
+  esac
+
   (
     cd "$source_dir"
 
     if [[ "$SIGN_SOURCE" == "1" ]]; then
       if [[ -n "${DEBSIGN_KEYID:-}" ]]; then
-        debuild -S -sa -k"${DEBSIGN_KEYID}"
+        debuild "${debuild_source_args[@]}" -k"${DEBSIGN_KEYID}"
       else
-        debuild -S -sa
+        debuild "${debuild_source_args[@]}"
       fi
     else
-      debuild -S -sa -us -uc
+      debuild "${debuild_source_args[@]}" -us -uc
     fi
   )
 }

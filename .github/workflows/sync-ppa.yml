@@ -91,6 +91,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.upstream.outputs.tag }}
           PPA_REVISION: ${{ steps.settings.outputs.revision }}
+          SOURCE_INCLUDE_MODE: auto
           DEBFULLNAME: daddyparodz
           DEBEMAIL: 45983094+daddyparodz@users.noreply.github.com
         run: |
@@ -105,11 +106,16 @@ jobs:
 
       - name: Validate generated source and binary payloads
         if: steps.state.outputs.skip != 'true'
+        env:
+          PPA_REVISION: ${{ steps.settings.outputs.revision }}
+          SOURCE_INCLUDE_MODE: auto
         run: |
           ./scripts/validate-generated-packages.sh dist
 
       - name: Upload to Launchpad
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
+        env:
+          PPA_REVISION: ${{ steps.settings.outputs.revision }}
         run: |
           echo "Starting Launchpad source upload..."
           ./scripts/upload-ppa.sh dist/*_source.changes
