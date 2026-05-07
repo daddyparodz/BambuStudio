@@ -14,6 +14,8 @@ BUILD_ROOT="${BUILD_ROOT:-$REPO_ROOT/build}"
 PPA_REVISION="${PPA_REVISION:-1}"
 SIGN_SOURCE="${SIGN_SOURCE:-0}"
 SOURCE_INCLUDE_MODE="${SOURCE_INCLUDE_MODE:-auto}"
+REUSE_EXISTING_ORIG="${REUSE_EXISTING_ORIG:-1}"
+PPA_ORIG_BASE_URL="${PPA_ORIG_BASE_URL:-https://ppa.launchpadcontent.net/daddyparodz/bambustudio/ubuntu/pool/main/b/bambustudio}"
 MAINTAINER_NAME="${MAINTAINER_NAME:-daddyparodz}"
 MAINTAINER_EMAIL="${MAINTAINER_EMAIL:-45983094+daddyparodz@users.noreply.github.com}"
 
@@ -29,6 +31,7 @@ Options:
   --build-root DIR            Directory for temporary package worktrees
   --ppa-revision N            PPA revision suffix, defaults to 1
   --source-include-mode MODE  auto|include-orig|exclude-orig (default: auto)
+  --reuse-existing-orig 0|1   Reuse existing orig from PPA when excluding orig (default: 1)
   --sign                      Sign source packages with debuild
 EOF
 }
@@ -61,6 +64,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --source-include-mode)
       SOURCE_INCLUDE_MODE="$2"
+      shift 2
+      ;;
+    --reuse-existing-orig)
+      REUSE_EXISTING_ORIG="$2"
       shift 2
       ;;
     --sign)
@@ -111,7 +118,7 @@ fi
 
 prepare_source_tree() {
   local series="$1"
-  local asset_url asset_name workspace source_dir package_version ubuntu_series_version series_upstream_version launcher_path desktop_path icon_root orig_tarball debuild_source_args
+  local asset_url asset_name workspace source_dir package_version ubuntu_series_version series_upstream_version launcher_path desktop_path icon_root orig_tarball orig_url debuild_source_args selected_include_mode
 
   ubuntu_series_version="$(series_version_suffix "$series")"
   series_upstream_version="${VERSION}+${series}"
@@ -119,50 +126,88 @@ prepare_source_tree() {
   workspace="$BUILD_ROOT/$series"
   source_dir="$workspace/bambustudio-${series_upstream_version}"
   mkdir -p "$workspace"
-  mkdir -p "$source_dir"
 
-  asset_url="$(appimage_asset_url "$RELEASE_JSON" "$series")"
-  asset_name="$(basename "$asset_url")"
-
-  curl -fL "$asset_url" -o "$source_dir/BambuStudio.AppImage"
-  chmod 0755 "$source_dir/BambuStudio.AppImage"
-  local appimage_size appimage_sha256
-  appimage_size="$(stat -c '%s' "$source_dir/BambuStudio.AppImage")"
-  appimage_sha256="$(sha256sum "$source_dir/BambuStudio.AppImage" | awk '{print $1}')"
-  echo "Series: ${series}"
-  echo "Asset URL: ${asset_url}"
-  echo "Asset size (bytes): ${appimage_size}"
-  echo "Asset sha256: ${appimage_sha256}"
-  if (( appimage_size < 100000000 )); then
-    die "Downloaded AppImage is unexpectedly small (${appimage_size} bytes)"
-  fi
-
-  (
-    cd "$source_dir"
-    ./BambuStudio.AppImage --appimage-extract >/dev/null
-  )
-
-  cp -a "$REPO_ROOT/packaging/debian" "$source_dir/debian"
-
-  if [[ -f "$source_dir/squashfs-root/BambuStudio.png" ]]; then
-    cp "$source_dir/squashfs-root/BambuStudio.png" "$source_dir/BambuStudio.png"
-  else
-    die "Missing top-level BambuStudio icon in upstream AppImage"
-  fi
-
-  icon_root="$source_dir/icons"
-  mkdir -p "$icon_root"
-  local size src dest
-  for size in 32x32 128x128 192x192; do
-    src="$source_dir/squashfs-root/usr/share/icons/hicolor/$size/apps/BambuStudio.png"
-    dest="$icon_root/$size/apps/BambuStudio.png"
-    mkdir -p "$(dirname "$dest")"
-    if [[ -f "$src" ]]; then
-      cp "$src" "$dest"
+  selected_include_mode="$SOURCE_INCLUDE_MODE"
+  if [[ "$selected_include_mode" == "auto" ]]; then
+    if (( PPA_REVISION > 1 )); then
+      selected_include_mode="exclude-orig"
     else
-      cp "$source_dir/BambuStudio.png" "$dest"
+      selected_include_mode="include-orig"
     fi
-  done
+  fi
+
+  debuild_source_args=(-S)
+  case "$selected_include_mode" in
+    include-orig)
+      debuild_source_args+=(-sa)
+      echo "Source include mode: include orig tarball (-sa)"
+      ;;
+    exclude-orig)
+      debuild_source_args+=(-sd)
+      echo "Source include mode: exclude orig tarball from .changes (-sd)"
+      ;;
+    *)
+      die "Unknown selected source include mode: $selected_include_mode"
+      ;;
+  esac
+
+  orig_tarball="$workspace/bambustudio_${series_upstream_version}.orig.tar.xz"
+  rm -f "$orig_tarball"
+  if [[ "$selected_include_mode" == "exclude-orig" && "$REUSE_EXISTING_ORIG" == "1" ]]; then
+    orig_url="${PPA_ORIG_BASE_URL}/bambustudio_${series_upstream_version}.orig.tar.xz"
+    if curl -fsSL "$orig_url" -o "$orig_tarball"; then
+      echo "Reusing existing orig tarball from PPA: $orig_url"
+      tar -C "$workspace" -xJf "$orig_tarball"
+      if [[ ! -d "$source_dir" ]]; then
+        die "Downloaded orig tarball did not contain expected source dir: $source_dir"
+      fi
+    fi
+  fi
+
+  if [[ ! -d "$source_dir" ]]; then
+    mkdir -p "$source_dir"
+    asset_url="$(appimage_asset_url "$RELEASE_JSON" "$series")"
+    asset_name="$(basename "$asset_url")"
+
+    curl -fL "$asset_url" -o "$source_dir/BambuStudio.AppImage"
+    chmod 0755 "$source_dir/BambuStudio.AppImage"
+    local appimage_size appimage_sha256
+    appimage_size="$(stat -c '%s' "$source_dir/BambuStudio.AppImage")"
+    appimage_sha256="$(sha256sum "$source_dir/BambuStudio.AppImage" | awk '{print $1}')"
+    echo "Series: ${series}"
+    echo "Asset URL: ${asset_url}"
+    echo "Asset size (bytes): ${appimage_size}"
+    echo "Asset sha256: ${appimage_sha256}"
+    if (( appimage_size < 100000000 )); then
+      die "Downloaded AppImage is unexpectedly small (${appimage_size} bytes)"
+    fi
+
+    (
+      cd "$source_dir"
+      ./BambuStudio.AppImage --appimage-extract >/dev/null
+    )
+
+    cp -a "$REPO_ROOT/packaging/debian" "$source_dir/debian"
+
+    if [[ -f "$source_dir/squashfs-root/BambuStudio.png" ]]; then
+      cp "$source_dir/squashfs-root/BambuStudio.png" "$source_dir/BambuStudio.png"
+    else
+      die "Missing top-level BambuStudio icon in upstream AppImage"
+    fi
+
+    icon_root="$source_dir/icons"
+    mkdir -p "$icon_root"
+    local size src dest
+    for size in 32x32 128x128 192x192; do
+      src="$source_dir/squashfs-root/usr/share/icons/hicolor/$size/apps/BambuStudio.png"
+      dest="$icon_root/$size/apps/BambuStudio.png"
+      mkdir -p "$(dirname "$dest")"
+      if [[ -f "$src" ]]; then
+        cp "$src" "$dest"
+      else
+        cp "$source_dir/BambuStudio.png" "$dest"
+      fi
+    done
 
   launcher_path="$source_dir/bambustudio"
   cat > "$launcher_path" <<'EOF'
@@ -201,7 +246,7 @@ StartupWMClass=bambu-studio
 X-AppImage-Version=${VERSION}
 EOF
 
-  cat > "$source_dir/debian/changelog" <<EOF
+    cat > "$source_dir/debian/changelog" <<EOF
 bambustudio (${package_version}) ${series}; urgency=medium
 
   * Repackage upstream release ${TAG}.
@@ -210,32 +255,20 @@ bambustudio (${package_version}) ${series}; urgency=medium
  -- ${MAINTAINER_NAME} <${MAINTAINER_EMAIL}>  ${CHANGELOG_DATE}
 EOF
 
-  rm -rf "$source_dir/squashfs-root"
+    rm -rf "$source_dir/squashfs-root"
+    rm -f "$orig_tarball"
+    tar --exclude='./debian' -C "$workspace" -cJf "$orig_tarball" "bambustudio-${series_upstream_version}"
+  else
+    rm -rf "$source_dir/debian"
+    cp -a "$REPO_ROOT/packaging/debian" "$source_dir/debian"
+    cat > "$source_dir/debian/changelog" <<EOF
+bambustudio (${package_version}) ${series}; urgency=medium
 
-  orig_tarball="$workspace/bambustudio_${series_upstream_version}.orig.tar.xz"
-  rm -f "$orig_tarball"
-  tar --exclude='./debian' -C "$workspace" -cJf "$orig_tarball" "bambustudio-${series_upstream_version}"
+  * Rebuild Debian packaging revision for ${TAG}.
 
-  debuild_source_args=(-S)
-  case "$SOURCE_INCLUDE_MODE" in
-    include-orig)
-      debuild_source_args+=(-sa)
-      echo "Source include mode: include orig tarball (-sa)"
-      ;;
-    exclude-orig)
-      debuild_source_args+=(-sd)
-      echo "Source include mode: exclude orig tarball from .changes (-sd)"
-      ;;
-    auto)
-      if (( PPA_REVISION > 1 )); then
-        debuild_source_args+=(-sd)
-        echo "Source include mode: exclude orig tarball from .changes (-sd)"
-      else
-        debuild_source_args+=(-sa)
-        echo "Source include mode: include orig tarball (-sa)"
-      fi
-      ;;
-  esac
+ -- ${MAINTAINER_NAME} <${MAINTAINER_EMAIL}>  ${CHANGELOG_DATE}
+EOF
+  fi
 
   (
     cd "$source_dir"
