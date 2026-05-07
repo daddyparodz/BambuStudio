@@ -123,6 +123,7 @@ WRAPPER_CMD="bambustudio"
 DESKTOP_FILE="bambustudio.desktop"
 DESKTOP_NAME="BambuStudio"
 DESKTOP_COMMENT="A cutting-edge, feature-rich slicing software."
+ICON_BASENAME="BambuStudio"
 if [[ "$CHANNEL" == "beta" ]]; then
   SOURCE_PACKAGE_NAME="bambustudio-beta"
   BINARY_PACKAGE_NAME="bambustudio-beta"
@@ -131,6 +132,7 @@ if [[ "$CHANNEL" == "beta" ]]; then
   DESKTOP_FILE="bambustudio-beta.desktop"
   DESKTOP_NAME="BambuStudio Beta"
   DESKTOP_COMMENT="Bambu Studio beta channel repackaged from the official Linux AppImage."
+  ICON_BASENAME="BambuStudioBeta"
 fi
 
 prepare_source_tree() {
@@ -232,10 +234,10 @@ prepare_source_tree() {
 BambuStudio.AppImage ${INSTALL_DIR}/
 ${WRAPPER_CMD} usr/bin/
 ${DESKTOP_FILE} usr/share/applications/
-BambuStudio.png usr/share/pixmaps/
-icons/32x32/apps/BambuStudio.png usr/share/icons/hicolor/32x32/apps/
-icons/128x128/apps/BambuStudio.png usr/share/icons/hicolor/128x128/apps/
-icons/192x192/apps/BambuStudio.png usr/share/icons/hicolor/192x192/apps/
+${ICON_BASENAME}.png usr/share/pixmaps/
+icons/32x32/apps/${ICON_BASENAME}.png usr/share/icons/hicolor/32x32/apps/
+icons/128x128/apps/${ICON_BASENAME}.png usr/share/icons/hicolor/128x128/apps/
+icons/192x192/apps/${ICON_BASENAME}.png usr/share/icons/hicolor/192x192/apps/
 EOF
 
     cat > "$source_dir/debian/tests/smoke" <<EOF
@@ -249,7 +251,7 @@ EOF
     chmod 0755 "$source_dir/debian/tests/smoke"
 
     if [[ -f "$source_dir/squashfs-root/BambuStudio.png" ]]; then
-      cp "$source_dir/squashfs-root/BambuStudio.png" "$source_dir/BambuStudio.png"
+      cp "$source_dir/squashfs-root/BambuStudio.png" "$source_dir/${ICON_BASENAME}.png"
     else
       die "Missing top-level BambuStudio icon in upstream AppImage"
     fi
@@ -259,12 +261,12 @@ EOF
     local size src dest
     for size in 32x32 128x128 192x192; do
       src="$source_dir/squashfs-root/usr/share/icons/hicolor/$size/apps/BambuStudio.png"
-      dest="$icon_root/$size/apps/BambuStudio.png"
+      dest="$icon_root/$size/apps/${ICON_BASENAME}.png"
       mkdir -p "$(dirname "$dest")"
       if [[ -f "$src" ]]; then
         cp "$src" "$dest"
       else
-        cp "$source_dir/BambuStudio.png" "$dest"
+        cp "$source_dir/${ICON_BASENAME}.png" "$dest"
       fi
     done
 
@@ -298,7 +300,7 @@ Name=${DESKTOP_NAME}
 GenericName=3D Printing Software
 Comment=${DESKTOP_COMMENT}
 Exec=/usr/bin/${WRAPPER_CMD} %U
-Icon=BambuStudio
+Icon=${ICON_BASENAME}
 Terminal=false
 Type=Application
 Categories=Graphics;3DGraphics;Engineering;
@@ -336,10 +338,10 @@ EOF
 BambuStudio.AppImage ${INSTALL_DIR}/
 ${WRAPPER_CMD} usr/bin/
 ${DESKTOP_FILE} usr/share/applications/
-BambuStudio.png usr/share/pixmaps/
-icons/32x32/apps/BambuStudio.png usr/share/icons/hicolor/32x32/apps/
-icons/128x128/apps/BambuStudio.png usr/share/icons/hicolor/128x128/apps/
-icons/192x192/apps/BambuStudio.png usr/share/icons/hicolor/192x192/apps/
+${ICON_BASENAME}.png usr/share/pixmaps/
+icons/32x32/apps/${ICON_BASENAME}.png usr/share/icons/hicolor/32x32/apps/
+icons/128x128/apps/${ICON_BASENAME}.png usr/share/icons/hicolor/128x128/apps/
+icons/192x192/apps/${ICON_BASENAME}.png usr/share/icons/hicolor/192x192/apps/
 EOF
     cat > "$source_dir/debian/tests/smoke" <<EOF
 #!/bin/sh
@@ -356,6 +358,29 @@ ${SOURCE_PACKAGE_NAME} (${package_version}) ${series}; urgency=medium
   * Rebuild Debian packaging revision for ${TAG}.
 
  -- ${MAINTAINER_NAME} <${MAINTAINER_EMAIL}>  ${CHANGELOG_DATE}
+EOF
+  fi
+
+  if [[ "$CHANNEL" == "beta" ]]; then
+    if [[ -f "$source_dir/BambuStudio.png" && ! -f "$source_dir/BambuStudioBeta.png" ]]; then
+      cp "$source_dir/BambuStudio.png" "$source_dir/BambuStudioBeta.png"
+    fi
+    local size old_icon new_icon
+    for size in 32x32 128x128 192x192; do
+      old_icon="$source_dir/icons/$size/apps/BambuStudio.png"
+      new_icon="$source_dir/icons/$size/apps/BambuStudioBeta.png"
+      mkdir -p "$(dirname "$new_icon")"
+      if [[ -f "$old_icon" && ! -f "$new_icon" ]]; then
+        cp "$old_icon" "$new_icon"
+      elif [[ -f "$source_dir/BambuStudioBeta.png" && ! -f "$new_icon" ]]; then
+        cp "$source_dir/BambuStudioBeta.png" "$new_icon"
+      fi
+    done
+    cat > "$source_dir/debian/source/include-binaries" <<'EOF'
+BambuStudioBeta.png
+icons/32x32/apps/BambuStudioBeta.png
+icons/128x128/apps/BambuStudioBeta.png
+icons/192x192/apps/BambuStudioBeta.png
 EOF
   fi
 
