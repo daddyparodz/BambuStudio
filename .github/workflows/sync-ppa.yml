@@ -19,6 +19,10 @@ on:
         required: false
         default: true
         type: boolean
+      series:
+        description: Optional space-separated Ubuntu series override
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -93,10 +97,15 @@ jobs:
           RELEASE_TAG: ${{ steps.upstream.outputs.tag }}
           PPA_REVISION: ${{ steps.settings.outputs.revision }}
           SOURCE_INCLUDE_MODE: auto
+          SERIES_OVERRIDE: ${{ inputs.series }}
           DEBFULLNAME: daddyparodz
           DEBEMAIL: 45983094+daddyparodz@users.noreply.github.com
         run: |
-          series="$(./scripts/list-ubuntu-series.sh)"
+          if [[ -n "${SERIES_OVERRIDE:-}" ]]; then
+            series="$SERIES_OVERRIDE"
+          else
+            series="$(./scripts/list-ubuntu-series.sh)"
+          fi
           echo "Using Ubuntu series: ${series}"
           args=(--release-tag "$RELEASE_TAG" --series "$series")
           if [[ "${{ steps.settings.outputs.upload }}" == "true" ]]; then
