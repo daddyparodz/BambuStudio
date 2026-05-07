@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync:
@@ -33,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl jq devscripts debhelper dput gnupg xz-utils desktop-file-utils xdg-utils
+          sudo apt-get install -y build-essential curl jq devscripts debhelper dput gnupg xz-utils desktop-file-utils xdg-utils distro-info-data
 
       - name: Determine upstream tag
         id: upstream
@@ -93,20 +94,30 @@ jobs:
           DEBFULLNAME: daddyparodz
           DEBEMAIL: 45983094+daddyparodz@users.noreply.github.com
         run: |
-          args=(--release-tag "$RELEASE_TAG" --series "jammy noble questing")
+          series="$(./scripts/list-ubuntu-series.sh)"
+          echo "Using Ubuntu series: ${series}"
+          args=(--release-tag "$RELEASE_TAG" --series "$series")
           if [[ "${{ steps.settings.outputs.upload }}" == "true" ]]; then
             export DEBSIGN_KEYID="${LAUNCHPAD_GPG_FINGERPRINT}"
             args+=(--sign)
           fi
           ./scripts/build-source-package.sh "${args[@]}"
 
+      - name: Validate generated source and binary payloads
+        if: steps.state.outputs.skip != 'true'
+        run: |
+          ./scripts/validate-generated-packages.sh dist
+
       - name: Upload to Launchpad
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
         run: |
+          echo "Starting Launchpad source upload..."
           ./scripts/upload-ppa.sh dist/*_source.changes
+          echo "Launchpad source upload completed."
 
       - name: Update packaged release marker
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true' && success() && github.ref == 'refs/heads/main'
+        continue-on-error: true
         run: |
           printf '%s\n' "${{ steps.upstream.outputs.tag }}" > state/latest-stable-tag.txt
           git config user.name "github-actions[bot]"
@@ -115,9 +126,17 @@ jobs:
           git commit -m "chore: record packaged release ${{ steps.upstream.outputs.tag }}" || exit 0
           git push
 
-      - name: Upload source package artifacts
-        if: steps.state.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: launchpad-source-package
-          path: dist/
+      - name: Cleanup old workflow artifacts
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Removing stale Actions artifacts to avoid storage accumulation..."
+          gh api repos/${{ github.repository }}/actions/artifacts --paginate \
+            --jq '.artifacts[] | select(.name=="launchpad-source-package" or .name=="source-package") | .id' \
+          | while read -r artifact_id; do
+              [[ -n "$artifact_id" ]] || continue
+              gh api --method DELETE repos/${{ github.repository }}/actions/artifacts/"$artifact_id"
+              echo "Deleted artifact id=$artifact_id"
+            done

@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl jq devscripts debhelper dput xz-utils desktop-file-utils xdg-utils lintian
+          sudo apt-get install -y build-essential curl jq devscripts debhelper dput xz-utils desktop-file-utils xdg-utils lintian distro-info-data
 
       - name: Check shell syntax
         run: |
@@ -40,8 +40,6 @@ jobs:
         run: |
           lintian --fail-on error dist/*.dsc dist/*_source.changes
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: source-package
-          path: dist/
+      - name: Validate generated source and binary payloads
+        run: |
+          ./scripts/validate-generated-packages.sh dist

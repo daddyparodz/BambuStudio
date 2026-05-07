@@ -12,3 +12,8 @@ override_dh_auto_test:
 override_dh_fixperms:
 	dh_fixperms
 	chmod 0755 debian/bambustudio/opt/bambustudio/BambuStudio.AppImage
+
+override_dh_strip:
+	# AppImage is an ELF launcher with an appended squashfs payload.
+	# Stripping it truncates the payload and makes it unlaunchable.
+	dh_strip --exclude=BambuStudio.AppImage

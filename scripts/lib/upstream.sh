@@ -54,33 +54,35 @@ release_version_from_tag() {
 
 series_version_suffix() {
   local series="$1"
-
-  case "$series" in
-    jammy) printf '22.04' ;;
-    noble) printf '24.04' ;;
-    questing) printf '25.10' ;;
-    *) die "Unsupported Ubuntu series: $series" ;;
-  esac
+  local version
+  version="$(ubuntu-distro-info --series="$series" -r 2>/dev/null || true)"
+  if [[ -z "$version" ]]; then
+    die "Unsupported Ubuntu series: $series"
+  fi
+  printf '%s\n' "$version"
 }
 
 preferred_asset_series() {
   local series="$1"
-
-  case "$series" in
-    jammy) printf '22.04' ;;
-    noble|questing) printf '24.04' ;;
-    *) die "Unsupported Ubuntu series: $series" ;;
-  esac
+  local version major
+  version="$(series_version_suffix "$series")"
+  major="${version%%.*}"
+  if (( major >= 24 )); then
+    printf '24.04\n'
+  else
+    printf '22.04\n'
+  fi
 }
 
 fallback_asset_series() {
   local series="$1"
-
-  case "$series" in
-    jammy) printf '24.04' ;;
-    noble|questing) printf '22.04' ;;
-    *) die "Unsupported Ubuntu series: $series" ;;
-  esac
+  local primary
+  primary="$(preferred_asset_series "$series")"
+  if [[ "$primary" == "24.04" ]]; then
+    printf '22.04\n'
+  else
+    printf '24.04\n'
+  fi
 }
 
 appimage_asset_url() {

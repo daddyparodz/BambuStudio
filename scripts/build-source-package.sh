@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./lib/upstream.sh
 source "$SCRIPT_DIR/lib/upstream.sh"
 
-SERIES="${UBUNTU_SERIES:-jammy noble questing}"
+SERIES="${UBUNTU_SERIES:-$("$SCRIPT_DIR/list-ubuntu-series.sh")}"
 CHANNEL="${CHANNEL:-stable}"
 RELEASE_TAG="${RELEASE_TAG:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/dist}"
@@ -115,6 +115,16 @@ prepare_source_tree() {
 
   curl -fL "$asset_url" -o "$source_dir/BambuStudio.AppImage"
   chmod 0755 "$source_dir/BambuStudio.AppImage"
+  local appimage_size appimage_sha256
+  appimage_size="$(stat -c '%s' "$source_dir/BambuStudio.AppImage")"
+  appimage_sha256="$(sha256sum "$source_dir/BambuStudio.AppImage" | awk '{print $1}')"
+  echo "Series: ${series}"
+  echo "Asset URL: ${asset_url}"
+  echo "Asset size (bytes): ${appimage_size}"
+  echo "Asset sha256: ${appimage_sha256}"
+  if (( appimage_size < 100000000 )); then
+    die "Downloaded AppImage is unexpectedly small (${appimage_size} bytes)"
+  fi
 
   (
     cd "$source_dir"
