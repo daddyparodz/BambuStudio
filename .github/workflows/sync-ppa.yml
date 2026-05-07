@@ -9,6 +9,14 @@ on:
         description: Optional upstream tag to package
         required: false
         type: string
+      channel:
+        description: Release channel to package
+        required: false
+        default: stable
+        type: choice
+        options:
+          - stable
+          - beta
       ppa_revision:
         description: PPA revision suffix
         required: false
@@ -43,11 +51,13 @@ jobs:
       - name: Determine upstream tag
         id: upstream
         run: |
+          channel="${{ inputs.channel || 'stable' }}"
           if [[ -n "${{ inputs.release_tag }}" ]]; then
             tag="${{ inputs.release_tag }}"
           else
-            tag="$(./scripts/get-latest-release-tag.sh stable)"
+            tag="$(./scripts/get-latest-release-tag.sh "$channel")"
           fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Resolve workflow settings
@@ -66,7 +76,8 @@ jobs:
       - name: Check whether upload is needed
         id: state
         run: |
-          recorded="$(tr -d '\n' < state/latest-stable-tag.txt || true)"
+          marker_file="state/latest-${{ steps.upstream.outputs.channel }}-tag.txt"
+          recorded="$(tr -d '\n' < "$marker_file" || true)"
           force=false
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.release_tag }}" ]]; then
             force=true
@@ -98,6 +109,7 @@ jobs:
           PPA_REVISION: ${{ steps.settings.outputs.revision }}
           SOURCE_INCLUDE_MODE: auto
           SERIES_OVERRIDE: ${{ inputs.series }}
+          CHANNEL: ${{ steps.upstream.outputs.channel }}
           DEBFULLNAME: daddyparodz
           DEBEMAIL: 45983094+daddyparodz@users.noreply.github.com
         run: |
@@ -112,7 +124,7 @@ jobs:
             export DEBSIGN_KEYID="${LAUNCHPAD_GPG_FINGERPRINT}"
             args+=(--sign)
           fi
-          ./scripts/build-source-package.sh "${args[@]}"
+          ./scripts/build-source-package.sh --channel "$CHANNEL" "${args[@]}"
 
       - name: Validate generated source and binary payloads
         if: steps.state.outputs.skip != 'true'
@@ -135,11 +147,12 @@ jobs:
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true' && success() && github.ref == 'refs/heads/main'
         continue-on-error: true
         run: |
-          printf '%s\n' "${{ steps.upstream.outputs.tag }}" > state/latest-stable-tag.txt
+          marker_file="state/latest-${{ steps.upstream.outputs.channel }}-tag.txt"
+          printf '%s\n' "${{ steps.upstream.outputs.tag }}" > "$marker_file"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state/latest-stable-tag.txt
-          git commit -m "chore: record packaged release ${{ steps.upstream.outputs.tag }}" || exit 0
+          git add "$marker_file"
+          git commit -m "chore: record ${{ steps.upstream.outputs.channel }} packaged release ${{ steps.upstream.outputs.tag }}" || exit 0
           git push
 
       - name: Cleanup old workflow artifacts

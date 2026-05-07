@@ -15,7 +15,7 @@ PPA_REVISION="${PPA_REVISION:-1}"
 SIGN_SOURCE="${SIGN_SOURCE:-0}"
 SOURCE_INCLUDE_MODE="${SOURCE_INCLUDE_MODE:-auto}"
 REUSE_EXISTING_ORIG="${REUSE_EXISTING_ORIG:-1}"
-PPA_ORIG_BASE_URL="${PPA_ORIG_BASE_URL:-https://ppa.launchpadcontent.net/daddyparodz/bambustudio/ubuntu/pool/main/b/bambustudio}"
+PPA_ORIG_BASE_URL="${PPA_ORIG_BASE_URL:-}"
 MAINTAINER_NAME="${MAINTAINER_NAME:-daddyparodz}"
 MAINTAINER_EMAIL="${MAINTAINER_EMAIL:-45983094+daddyparodz@users.noreply.github.com}"
 
@@ -116,15 +116,34 @@ else
   CHANGELOG_DATE="$(date -Ru -d "$PUBLISHED_AT")"
 fi
 
+SOURCE_PACKAGE_NAME="bambustudio"
+BINARY_PACKAGE_NAME="bambustudio"
+INSTALL_DIR="/opt/bambustudio"
+WRAPPER_CMD="bambustudio"
+DESKTOP_FILE="bambustudio.desktop"
+DESKTOP_NAME="BambuStudio"
+DESKTOP_COMMENT="A cutting-edge, feature-rich slicing software."
+if [[ "$CHANNEL" == "beta" ]]; then
+  SOURCE_PACKAGE_NAME="bambustudio-beta"
+  BINARY_PACKAGE_NAME="bambustudio-beta"
+  INSTALL_DIR="/opt/bambustudio-beta"
+  WRAPPER_CMD="bambustudio-beta"
+  DESKTOP_FILE="bambustudio-beta.desktop"
+  DESKTOP_NAME="BambuStudio Beta"
+  DESKTOP_COMMENT="Bambu Studio beta channel repackaged from the official Linux AppImage."
+fi
+
 prepare_source_tree() {
   local series="$1"
-  local asset_url asset_name workspace source_dir package_version ubuntu_series_version series_upstream_version launcher_path desktop_path icon_root orig_tarball orig_url debuild_source_args selected_include_mode
+  local asset_url asset_name workspace source_dir package_version ubuntu_series_version series_upstream_version
+  local launcher_path desktop_path icon_root orig_tarball orig_url debuild_source_args selected_include_mode
+  local source_base_url
 
   ubuntu_series_version="$(series_version_suffix "$series")"
   series_upstream_version="${VERSION}+${series}"
   package_version="${series_upstream_version}-0ppa${PPA_REVISION}~${ubuntu_series_version}.1"
   workspace="$BUILD_ROOT/$series"
-  source_dir="$workspace/bambustudio-${series_upstream_version}"
+  source_dir="$workspace/${SOURCE_PACKAGE_NAME}-${series_upstream_version}"
   mkdir -p "$workspace"
 
   selected_include_mode="$SOURCE_INCLUDE_MODE"
@@ -151,10 +170,15 @@ prepare_source_tree() {
       ;;
   esac
 
-  orig_tarball="$workspace/bambustudio_${series_upstream_version}.orig.tar.xz"
+  source_base_url="$PPA_ORIG_BASE_URL"
+  if [[ -z "$source_base_url" ]]; then
+    source_base_url="https://ppa.launchpadcontent.net/daddyparodz/bambustudio/ubuntu/pool/main/${SOURCE_PACKAGE_NAME:0:1}/${SOURCE_PACKAGE_NAME}"
+  fi
+
+  orig_tarball="$workspace/${SOURCE_PACKAGE_NAME}_${series_upstream_version}.orig.tar.xz"
   rm -f "$orig_tarball"
   if [[ "$selected_include_mode" == "exclude-orig" && "$REUSE_EXISTING_ORIG" == "1" ]]; then
-    orig_url="${PPA_ORIG_BASE_URL}/bambustudio_${series_upstream_version}.orig.tar.xz"
+    orig_url="${source_base_url}/${SOURCE_PACKAGE_NAME}_${series_upstream_version}.orig.tar.xz"
     if curl -fsSL "$orig_url" -o "$orig_tarball"; then
       echo "Reusing existing orig tarball from PPA: $orig_url"
       tar -C "$workspace" -xJf "$orig_tarball"
@@ -174,7 +198,14 @@ prepare_source_tree() {
     local appimage_size appimage_sha256
     appimage_size="$(stat -c '%s' "$source_dir/BambuStudio.AppImage")"
     appimage_sha256="$(sha256sum "$source_dir/BambuStudio.AppImage" | awk '{print $1}')"
+    echo "Channel: ${CHANNEL}"
+    echo "Source package: ${SOURCE_PACKAGE_NAME}"
+    echo "Binary package: ${BINARY_PACKAGE_NAME}"
     echo "Series: ${series}"
+    echo "Install path: ${INSTALL_DIR}/BambuStudio.AppImage"
+    echo "Wrapper path: /usr/bin/${WRAPPER_CMD}"
+    echo "Desktop file path: /usr/share/applications/${DESKTOP_FILE}"
+    echo "Upstream tag: ${TAG}"
     echo "Asset URL: ${asset_url}"
     echo "Asset size (bytes): ${appimage_size}"
     echo "Asset sha256: ${appimage_sha256}"
@@ -188,6 +219,34 @@ prepare_source_tree() {
     )
 
     cp -a "$REPO_ROOT/packaging/debian" "$source_dir/debian"
+    sed -i \
+      -e "s/@SOURCE_PACKAGE_NAME@/${SOURCE_PACKAGE_NAME}/g" \
+      -e "s/@BINARY_PACKAGE_NAME@/${BINARY_PACKAGE_NAME}/g" \
+      "$source_dir/debian/control"
+    if [[ -f "$source_dir/debian/source/lintian-overrides" ]]; then
+      sed -i "s/^bambustudio source:/${SOURCE_PACKAGE_NAME} source:/g" "$source_dir/debian/source/lintian-overrides"
+    fi
+
+    rm -f "$source_dir/debian/bambustudio.install"
+    cat > "$source_dir/debian/${BINARY_PACKAGE_NAME}.install" <<EOF
+BambuStudio.AppImage ${INSTALL_DIR}/
+${WRAPPER_CMD} usr/bin/
+${DESKTOP_FILE} usr/share/applications/
+BambuStudio.png usr/share/pixmaps/
+icons/32x32/apps/BambuStudio.png usr/share/icons/hicolor/32x32/apps/
+icons/128x128/apps/BambuStudio.png usr/share/icons/hicolor/128x128/apps/
+icons/192x192/apps/BambuStudio.png usr/share/icons/hicolor/192x192/apps/
+EOF
+
+    cat > "$source_dir/debian/tests/smoke" <<EOF
+#!/bin/sh
+set -eu
+
+test -x ${INSTALL_DIR}/BambuStudio.AppImage
+test -x /usr/bin/${WRAPPER_CMD}
+test -f /usr/share/applications/${DESKTOP_FILE}
+EOF
+    chmod 0755 "$source_dir/debian/tests/smoke"
 
     if [[ -f "$source_dir/squashfs-root/BambuStudio.png" ]]; then
       cp "$source_dir/squashfs-root/BambuStudio.png" "$source_dir/BambuStudio.png"
@@ -209,32 +268,36 @@ prepare_source_tree() {
       fi
     done
 
-  launcher_path="$source_dir/bambustudio"
-  cat > "$launcher_path" <<'EOF'
+    launcher_path="$source_dir/${WRAPPER_CMD}"
+    cat > "$launcher_path" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-APPIMAGE=/opt/bambustudio/BambuStudio.AppImage
+APPIMAGE=@INSTALL_DIR@/BambuStudio.AppImage
 export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}"
 export SSL_CERT_DIR="${SSL_CERT_DIR:-/etc/ssl/certs}"
 
 if command -v xdg-mime >/dev/null 2>&1; then
-  if [[ "$(xdg-mime query default x-scheme-handler/bambustudioopen 2>/dev/null || true)" != "bambustudio.desktop" ]]; then
-    xdg-mime default bambustudio.desktop x-scheme-handler/bambustudioopen x-scheme-handler/bambustudio >/dev/null 2>&1 || true
+  if [[ "$(xdg-mime query default x-scheme-handler/bambustudioopen 2>/dev/null || true)" != "@DESKTOP_FILE@" ]]; then
+    xdg-mime default @DESKTOP_FILE@ x-scheme-handler/bambustudioopen x-scheme-handler/bambustudio >/dev/null 2>&1 || true
   fi
 fi
 
 exec "$APPIMAGE" "$@"
 EOF
-  chmod 0755 "$launcher_path"
+    sed -i \
+      -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" \
+      -e "s|@DESKTOP_FILE@|${DESKTOP_FILE}|g" \
+      "$launcher_path"
+    chmod 0755 "$launcher_path"
 
-  desktop_path="$source_dir/bambustudio.desktop"
-  cat > "$desktop_path" <<EOF
+    desktop_path="$source_dir/${DESKTOP_FILE}"
+    cat > "$desktop_path" <<EOF
 [Desktop Entry]
-Name=BambuStudio
+Name=${DESKTOP_NAME}
 GenericName=3D Printing Software
-Comment=A cutting-edge, feature-rich slicing software.
-Exec=/usr/bin/bambustudio %U
+Comment=${DESKTOP_COMMENT}
+Exec=/usr/bin/${WRAPPER_CMD} %U
 Icon=BambuStudio
 Terminal=false
 Type=Application
@@ -247,7 +310,7 @@ X-AppImage-Version=${VERSION}
 EOF
 
     cat > "$source_dir/debian/changelog" <<EOF
-bambustudio (${package_version}) ${series}; urgency=medium
+${SOURCE_PACKAGE_NAME} (${package_version}) ${series}; urgency=medium
 
   * Repackage upstream release ${TAG}.
   * Bundle the official ${asset_name} AppImage for Ubuntu ${series}.
@@ -257,12 +320,38 @@ EOF
 
     rm -rf "$source_dir/squashfs-root"
     rm -f "$orig_tarball"
-    tar --exclude='./debian' -C "$workspace" -cJf "$orig_tarball" "bambustudio-${series_upstream_version}"
+    tar --exclude='./debian' -C "$workspace" -cJf "$orig_tarball" "${SOURCE_PACKAGE_NAME}-${series_upstream_version}"
   else
     rm -rf "$source_dir/debian"
     cp -a "$REPO_ROOT/packaging/debian" "$source_dir/debian"
+    sed -i \
+      -e "s/@SOURCE_PACKAGE_NAME@/${SOURCE_PACKAGE_NAME}/g" \
+      -e "s/@BINARY_PACKAGE_NAME@/${BINARY_PACKAGE_NAME}/g" \
+      "$source_dir/debian/control"
+    if [[ -f "$source_dir/debian/source/lintian-overrides" ]]; then
+      sed -i "s/^bambustudio source:/${SOURCE_PACKAGE_NAME} source:/g" "$source_dir/debian/source/lintian-overrides"
+    fi
+    rm -f "$source_dir/debian/bambustudio.install"
+    cat > "$source_dir/debian/${BINARY_PACKAGE_NAME}.install" <<EOF
+BambuStudio.AppImage ${INSTALL_DIR}/
+${WRAPPER_CMD} usr/bin/
+${DESKTOP_FILE} usr/share/applications/
+BambuStudio.png usr/share/pixmaps/
+icons/32x32/apps/BambuStudio.png usr/share/icons/hicolor/32x32/apps/
+icons/128x128/apps/BambuStudio.png usr/share/icons/hicolor/128x128/apps/
+icons/192x192/apps/BambuStudio.png usr/share/icons/hicolor/192x192/apps/
+EOF
+    cat > "$source_dir/debian/tests/smoke" <<EOF
+#!/bin/sh
+set -eu
+
+test -x ${INSTALL_DIR}/BambuStudio.AppImage
+test -x /usr/bin/${WRAPPER_CMD}
+test -f /usr/share/applications/${DESKTOP_FILE}
+EOF
+    chmod 0755 "$source_dir/debian/tests/smoke"
     cat > "$source_dir/debian/changelog" <<EOF
-bambustudio (${package_version}) ${series}; urgency=medium
+${SOURCE_PACKAGE_NAME} (${package_version}) ${series}; urgency=medium
 
   * Rebuild Debian packaging revision for ${TAG}.
 

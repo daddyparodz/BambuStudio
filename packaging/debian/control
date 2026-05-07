@@ -1,4 +1,4 @@
-Source: bambustudio
+Source: @SOURCE_PACKAGE_NAME@
 Section: graphics
 Priority: optional
 Maintainer: daddyparodz <45983094+daddyparodz@users.noreply.github.com>
@@ -9,7 +9,7 @@ Homepage: https://github.com/bambulab/BambuStudio
 Vcs-Browser: https://github.com/daddyparodz/bambustudio
 Vcs-Git: https://github.com/daddyparodz/bambustudio.git
 
-Package: bambustudio
+Package: @BINARY_PACKAGE_NAME@
 Architecture: amd64
 Depends: ${misc:Depends}, libfuse2t64 | libfuse2, desktop-file-utils, xdg-utils
 Description: Bambu Studio repackaged from the official Linux AppImage

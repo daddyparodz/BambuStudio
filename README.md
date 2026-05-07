@@ -18,6 +18,14 @@ sudo apt update
 sudo apt install bambustudio
 ```
 
+## Install Beta
+
+```bash
+sudo add-apt-repository ppa:daddyparodz/bambustudio
+sudo apt update
+sudo apt install bambustudio-beta
+```
+
 ## Included
 
 - Ubuntu packages built from the official Bambu Lab Linux releases
@@ -35,6 +43,7 @@ sudo apt upgrade
 
 ```bash
 sudo apt remove bambustudio
+sudo apt remove bambustudio-beta
 sudo add-apt-repository --remove ppa:daddyparodz/bambustudio
 ```
 

@@ -33,7 +33,7 @@ for changes in "${changes_files[@]}"; do
   (
     cd "$stage"
     dpkg-source -x "$(basename "$dsc")"
-    srcdir="$(find . -maxdepth 1 -type d -name 'bambustudio-*' | head -n1)"
+    srcdir="$(find . -maxdepth 1 -type d \( -name 'bambustudio-*' -o -name 'bambustudio-beta-*' \) | head -n1)"
     appimg="$srcdir/BambuStudio.AppImage"
     appimg_size="$(stat -c '%s' "$appimg")"
     echo "Validating source AppImage for $pkg_base (size=$appimg_size)"
@@ -51,10 +51,21 @@ for changes in "${changes_files[@]}"; do
       dpkg-buildpackage -b -us -uc
     )
 
-    deb="$(find . -maxdepth 1 -type f -name 'bambustudio_*_amd64.deb' | head -n1)"
+    deb="$(find . -maxdepth 1 -type f \( -name 'bambustudio_*_amd64.deb' -o -name 'bambustudio-beta_*_amd64.deb' \) | head -n1)"
     mkdir -p debroot
     dpkg-deb -x "$deb" debroot
-    staged_appimg="debroot/opt/bambustudio/BambuStudio.AppImage"
+    staged_appimg="$(find debroot/opt -maxdepth 3 -type f -name 'BambuStudio.AppImage' | head -n1)"
+    if [[ -z "$staged_appimg" ]]; then
+      echo "No staged AppImage found in built deb for $pkg_base" >&2
+      exit 1
+    fi
+    if [[ "$staged_appimg" == *"/opt/bambustudio-beta/"* ]]; then
+      staged_wrapper="debroot/usr/bin/bambustudio-beta"
+      staged_desktop="debroot/usr/share/applications/bambustudio-beta.desktop"
+    else
+      staged_wrapper="debroot/usr/bin/bambustudio"
+      staged_desktop="debroot/usr/share/applications/bambustudio.desktop"
+    fi
     staged_size="$(stat -c '%s' "$staged_appimg")"
     echo "Validating built deb AppImage for $pkg_base (size=$staged_size)"
     if (( staged_size < 100000000 )); then
@@ -64,8 +75,8 @@ for changes in "${changes_files[@]}"; do
     chmod +x "$staged_appimg"
     "$staged_appimg" --appimage-extract >/dev/null
     test -f squashfs-root/AppRun
-    test -x debroot/usr/bin/bambustudio
-    test -f debroot/usr/share/applications/bambustudio.desktop
+    test -x "$staged_wrapper"
+    test -f "$staged_desktop"
   )
 
   if [[ "$SOURCE_INCLUDE_MODE" == "exclude-orig" ]] || { [[ "$SOURCE_INCLUDE_MODE" == "auto" ]] && (( PPA_REVISION > 1 )); }; then
