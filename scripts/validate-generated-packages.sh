@@ -26,9 +26,7 @@ for changes in "${changes_files[@]}"; do
 
   stage="$WORK_DIR/$pkg_base"
   mkdir -p "$stage"
-  while read -r fname; do
-    cp "$DIST_DIR/$fname" "$stage/"
-  done < <(awk '/^Files:/{flag=1;next}/^[A-Z]/{if(flag)exit}flag{print $NF}' "$changes")
+  find "$DIST_DIR" -maxdepth 1 -type f -exec cp -f {} "$stage/" \;
 
   (
     cd "$stage"
