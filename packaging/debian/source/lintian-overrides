@@ -1,2 +1,3 @@
 bambustudio source: binary-nmu-debian-revision-in-source
 bambustudio source: no-debian-changes
+bambustudio source: source-is-missing [BambuStudio.AppImage]
