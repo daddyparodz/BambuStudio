@@ -59,7 +59,7 @@ series_version_suffix() {
   if [[ -z "$version" ]]; then
     die "Unsupported Ubuntu series: $series"
   fi
-  printf '%s\n' "$version"
+  printf '%s\n' "$version" | awk '{print $1}'
 }
 
 preferred_asset_series() {
