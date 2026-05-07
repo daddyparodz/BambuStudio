@@ -89,6 +89,7 @@ jobs:
       - name: Build source packages
         if: steps.state.outputs.skip != 'true'
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.upstream.outputs.tag }}
           PPA_REVISION: ${{ steps.settings.outputs.revision }}
           SOURCE_INCLUDE_MODE: auto
