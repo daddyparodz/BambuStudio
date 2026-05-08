@@ -1,4 +1,4 @@
-# Bambu Studio Ubuntu PPA
+# Unofficial Bambu Studio Ubuntu PPA
 
 Launchpad packaging for Bambu Studio on Ubuntu.
 
