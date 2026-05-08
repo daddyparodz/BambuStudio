@@ -10,7 +10,7 @@ Supported Ubuntu series:
 - `noble` (24.04 LTS)
 - `questing` (25.10)
 
-## Install
+## Install Stable
 
 ```bash
 sudo add-apt-repository ppa:daddyparodz/bambustudio
@@ -26,11 +26,28 @@ sudo apt update
 sudo apt install bambustudio-beta
 ```
 
-## Included
+## Install Both Side-by-Side
 
-- Ubuntu packages built from the official Bambu Lab Linux releases
-- Desktop integration for launching `bambustudio` as a standard application
-- Updates delivered through normal `apt` upgrades
+```bash
+sudo add-apt-repository ppa:daddyparodz/bambustudio
+sudo apt update
+sudo apt install bambustudio bambustudio-beta
+```
+
+## What You Get
+
+- `bambustudio`: stable channel package
+- `bambustudio-beta`: beta channel package
+- side-by-side install support
+- desktop launcher integration
+- updates delivered via normal `apt upgrade`
+
+## Verify Installed Versions
+
+```bash
+apt-cache policy bambustudio
+apt-cache policy bambustudio-beta
+```
 
 ## Update
 
@@ -46,6 +63,22 @@ sudo apt remove bambustudio
 sudo apt remove bambustudio-beta
 sudo add-apt-repository --remove ppa:daddyparodz/bambustudio
 ```
+
+## Launch
+
+```bash
+bambustudio
+bambustudio-beta
+gtk-launch bambustudio
+gtk-launch bambustudio-beta
+```
+
+## Release Cadence
+
+The PPA checks upstream releases automatically every 6 hours and publishes:
+
+- latest stable to `bambustudio`
+- latest beta to `bambustudio-beta`
 
 ## Upstream
 
