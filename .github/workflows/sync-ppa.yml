@@ -2,7 +2,7 @@ name: Sync Launchpad PPA
 
 on:
   schedule:
-    - cron: '23 */6 * * *'
+    - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       release_tag:
