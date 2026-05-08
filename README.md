@@ -80,6 +80,10 @@ The PPA checks upstream releases automatically every 6 hours and publishes:
 - latest stable to `bambustudio`
 - latest beta to `bambustudio-beta`
 
+## Known Issues
+
+- On native Wayland sessions (Ubuntu default), BambuStudio may show both its in-app top bar controls and compositor-managed window controls. This behavior comes from upstream app/compositor decoration handling and is not reliably patchable from Debian packaging alone.
+
 ## Upstream
 
 Upstream project and release source:
