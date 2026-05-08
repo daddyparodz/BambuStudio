@@ -10,3 +10,4 @@ tmp/
 *.tar.xz
 *.tar.gz
 .pc/
+*.json

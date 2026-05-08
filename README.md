@@ -91,6 +91,3 @@ Upstream project and release source:
 - <https://github.com/bambulab/BambuStudio>
 - <https://github.com/bambulab/BambuStudio/releases>
 
-## Maintainers
-
-This repository contains the Debian packaging, Launchpad upload workflow, and release automation used to publish the PPA.
