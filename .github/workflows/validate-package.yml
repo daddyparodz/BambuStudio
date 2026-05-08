@@ -8,13 +8,11 @@ on:
       - '.github/workflows/**'
       - 'packaging/**'
       - 'scripts/**'
-      - 'README.md'
   pull_request:
     paths:
       - '.github/workflows/**'
       - 'packaging/**'
       - 'scripts/**'
-      - 'README.md'
 
 jobs:
   validate:
