@@ -54,6 +54,8 @@ jobs:
 
       - name: Determine upstream tag
         id: upstream
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           channel="${{ matrix.channel }}"
           if [[ -n "${{ inputs.release_tag }}" ]]; then
