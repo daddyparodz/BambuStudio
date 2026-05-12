@@ -178,9 +178,21 @@ prepare_source_tree() {
   fi
 
   orig_tarball="$workspace/${SOURCE_PACKAGE_NAME}_${series_upstream_version}.orig.tar.xz"
+  orig_url="${source_base_url}/${SOURCE_PACKAGE_NAME}_${series_upstream_version}.orig.tar.xz"
+
+  # When auto-selected to exclude orig (-sd), ensure Launchpad already has the
+  # exact orig tarball for this source package + upstream+series version.
+  # If not present, switch to include-orig (-sa) so uploads do not get rejected.
+  if [[ "$selected_include_mode" == "exclude-orig" && "$REUSE_EXISTING_ORIG" == "1" ]]; then
+    if ! curl -fsI "$orig_url" >/dev/null; then
+      echo "No existing orig tarball found in PPA for ${SOURCE_PACKAGE_NAME} ${series_upstream_version}; switching to include-orig (-sa)"
+      selected_include_mode="include-orig"
+      debuild_source_args=(-S -sa)
+    fi
+  fi
+
   rm -f "$orig_tarball"
   if [[ "$selected_include_mode" == "exclude-orig" && "$REUSE_EXISTING_ORIG" == "1" ]]; then
-    orig_url="${source_base_url}/${SOURCE_PACKAGE_NAME}_${series_upstream_version}.orig.tar.xz"
     if curl -fsSL "$orig_url" -o "$orig_tarball"; then
       echo "Reusing existing orig tarball from PPA: $orig_url"
       tar -C "$workspace" -xJf "$orig_tarball"
