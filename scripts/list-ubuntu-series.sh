@@ -6,6 +6,22 @@ if ! command -v ubuntu-distro-info >/dev/null 2>&1; then
   exit 1
 fi
 
-# Launchpad PPAs only accept active Ubuntu series. `--supported` includes
-# currently supported stable releases and the current development series.
-ubuntu-distro-info --supported | tr '\n' ' ' | sed -E 's/[[:space:]]+$//'
+# Auto-include supported Ubuntu series, but exclude the active development
+# codename to avoid pre-release publication failures.
+supported="$(ubuntu-distro-info --supported | tr '\n' ' ')"
+devel="$(ubuntu-distro-info --devel 2>/dev/null || true)"
+
+out=()
+for series in $supported; do
+  if [[ -n "$devel" && "$series" == "$devel" ]]; then
+    continue
+  fi
+  out+=("$series")
+done
+
+if [[ "${#out[@]}" -eq 0 ]]; then
+  echo "No publishable Ubuntu series resolved from ubuntu-distro-info --supported" >&2
+  exit 1
+fi
+
+printf '%s\n' "${out[*]}"
