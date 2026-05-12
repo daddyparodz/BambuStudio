@@ -18,9 +18,8 @@ on:
           - stable
           - beta
       ppa_revision:
-        description: PPA revision suffix
+        description: Optional PPA revision override (normally auto-managed)
         required: false
-        default: '1'
         type: string
       upload:
         description: Upload to Launchpad
@@ -70,28 +69,60 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             upload="${{ inputs.upload }}"
-            revision="${{ inputs.ppa_revision }}"
+            revision_override="${{ inputs.ppa_revision }}"
           else
             upload="true"
-            revision="1"
+            revision_override=""
           fi
           echo "upload=$upload" >> "$GITHUB_OUTPUT"
-          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "revision_override=$revision_override" >> "$GITHUB_OUTPUT"
 
       - name: Check whether upload is needed
         id: state
         run: |
-          marker_file="state/latest-${{ steps.upstream.outputs.channel }}-tag.txt"
-          recorded="$(tr -d '\n' < "$marker_file" || true)"
-          force=false
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.release_tag }}" ]]; then
-            force=true
+          channel="${{ steps.upstream.outputs.channel }}"
+          marker_file="state/latest-${channel}-tag.txt"
+          commit_file="state/latest-${channel}-commit.txt"
+          revision_file="state/latest-${channel}-revision.txt"
+          recorded_tag="$(tr -d '\n' < "$marker_file" || true)"
+          recorded_commit="$(tr -d '\n' < "$commit_file" || true)"
+          recorded_revision="$(tr -d '\n' < "$revision_file" || true)"
+          current_tag="${{ steps.upstream.outputs.tag }}"
+          current_commit="${{ github.sha }}"
+          revision_override="${{ steps.settings.outputs.revision_override }}"
+
+          if [[ ! "$recorded_revision" =~ ^[0-9]+$ ]]; then
+            recorded_revision=1
           fi
-          if [[ "$recorded" == "${{ steps.upstream.outputs.tag }}" && "$force" != "true" ]]; then
+
+          # Respect explicit manual override when provided.
+          if [[ -n "$revision_override" ]]; then
+            if ! [[ "$revision_override" =~ ^[0-9]+$ ]]; then
+              echo "Invalid ppa_revision override: $revision_override" >&2
+              exit 1
+            fi
+            revision="$revision_override"
+            skip=false
+          elif [[ "$recorded_tag" != "$current_tag" ]]; then
+            # New upstream tag always resets revision to 1.
+            revision=1
+            skip=false
+          elif [[ "$recorded_commit" != "$current_commit" ]]; then
+            # Same upstream tag but packaging repo changed: bump revision.
+            revision=$((recorded_revision + 1))
+            skip=false
+          else
+            # Same upstream tag and same packaging commit: nothing to publish.
+            revision="$recorded_revision"
+            skip=true
+          fi
+
+          if [[ "$skip" == "true" ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
 
       - name: Import Launchpad signing key
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
@@ -111,7 +142,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.upstream.outputs.tag }}
-          PPA_REVISION: ${{ steps.settings.outputs.revision }}
+          PPA_REVISION: ${{ steps.state.outputs.revision }}
           SOURCE_INCLUDE_MODE: auto
           SERIES_OVERRIDE: ${{ inputs.series }}
           CHANNEL: ${{ steps.upstream.outputs.channel }}
@@ -134,7 +165,7 @@ jobs:
       - name: Validate generated source and binary payloads
         if: steps.state.outputs.skip != 'true'
         env:
-          PPA_REVISION: ${{ steps.settings.outputs.revision }}
+          PPA_REVISION: ${{ steps.state.outputs.revision }}
           SOURCE_INCLUDE_MODE: auto
         run: |
           ./scripts/validate-generated-packages.sh dist
@@ -142,7 +173,7 @@ jobs:
       - name: Upload to Launchpad
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
         env:
-          PPA_REVISION: ${{ steps.settings.outputs.revision }}
+          PPA_REVISION: ${{ steps.state.outputs.revision }}
         run: |
           echo "Starting Launchpad source upload..."
           ./scripts/upload-ppa.sh dist/*_source.changes
@@ -152,12 +183,17 @@ jobs:
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true' && success() && github.ref == 'refs/heads/main'
         continue-on-error: true
         run: |
-          marker_file="state/latest-${{ steps.upstream.outputs.channel }}-tag.txt"
+          channel="${{ steps.upstream.outputs.channel }}"
+          marker_file="state/latest-${channel}-tag.txt"
+          commit_file="state/latest-${channel}-commit.txt"
+          revision_file="state/latest-${channel}-revision.txt"
           printf '%s\n' "${{ steps.upstream.outputs.tag }}" > "$marker_file"
+          printf '%s\n' "${{ github.sha }}" > "$commit_file"
+          printf '%s\n' "${{ steps.state.outputs.revision }}" > "$revision_file"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$marker_file"
-          git commit -m "chore: record ${{ steps.upstream.outputs.channel }} packaged release ${{ steps.upstream.outputs.tag }}" || exit 0
+          git add "$marker_file" "$commit_file" "$revision_file"
+          git commit -m "chore: record ${{ steps.upstream.outputs.channel }} packaged release ${{ steps.upstream.outputs.tag }}-0ppa${{ steps.state.outputs.revision }}" || exit 0
           git push
 
       - name: Cleanup old workflow artifacts
