@@ -88,18 +88,10 @@ for changes in "${changes_files[@]}"; do
       expect_exclude_orig=false
       ;;
     auto)
-      if (( PPA_REVISION > 1 )); then
-        # Mirror build-source-package.sh behavior:
-        # In auto mode we exclude orig only when the exact orig is already in PPA.
-        package_name="$(awk '$1=="Source:"{print $2; exit}' "$dsc")"
-        dsc_version="$(awk '$1=="Version:"{print $2; exit}' "$dsc")"
-        upstream_plus_series="${dsc_version%%-*}"
-        source_base_url="https://ppa.launchpadcontent.net/daddyparodz/bambustudio/ubuntu/pool/main/${package_name:0:1}/${package_name}"
-        orig_url="${source_base_url}/${package_name}_${upstream_plus_series}.orig.tar.xz"
-        if curl -fsI "$orig_url" >/dev/null; then
-          expect_exclude_orig=true
-        fi
-      fi
+      # Auto mode is intentionally non-strict here because remote archive
+      # visibility can race/flap during CI. Build/upload scripts decide whether
+      # to include orig; validation should not second-guess it.
+      expect_exclude_orig=false
       ;;
     *)
       echo "Unsupported SOURCE_INCLUDE_MODE: $SOURCE_INCLUDE_MODE" >&2

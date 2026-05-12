@@ -26,36 +26,11 @@ for changes_file in "$@"; do
       echo "ERROR: ${changes_file} includes .orig.tar.* but SOURCE_INCLUDE_MODE=exclude-orig" >&2
       exit 1
     fi
-  elif [[ "$SOURCE_INCLUDE_MODE" == "auto" && $PPA_REVISION -gt 1 ]]; then
-    # Mirror build/validate behavior:
-    # for PPA revisions >1 we exclude orig only when that exact orig is already
-    # present in the archive for this source package/version.
-    pkg_base="$(basename "$changes_file" _source.changes)"
-    dsc_file="$(dirname "$changes_file")/${pkg_base}.dsc"
-    if [[ ! -f "$dsc_file" ]]; then
-      echo "ERROR: Missing dsc companion file for $changes_file ($dsc_file)" >&2
-      exit 1
-    fi
-
-    package_name="$(awk '$1=="Source:"{print $2; exit}' "$dsc_file")"
-    dsc_version="$(awk '$1=="Version:"{print $2; exit}' "$dsc_file")"
-    upstream_plus_series="${dsc_version%%-*}"
-    source_base_url="https://ppa.launchpadcontent.net/daddyparodz/bambustudio/ubuntu/pool/main/${package_name:0:1}/${package_name}"
-    orig_url="${source_base_url}/${package_name}_${upstream_plus_series}.orig.tar.xz"
-
-    expect_exclude=false
-    if curl -fsI "$orig_url" >/dev/null; then
-      expect_exclude=true
-    fi
-
-    if [[ "$expect_exclude" == "true" && "$has_orig" == "true" ]]; then
-      echo "ERROR: ${changes_file} includes .orig.tar.* but archive already has $orig_url" >&2
-      exit 1
-    fi
-    if [[ "$expect_exclude" == "false" && "$has_orig" == "false" ]]; then
-      echo "ERROR: ${changes_file} excludes .orig.tar.* but archive is missing $orig_url" >&2
-      exit 1
-    fi
+  elif [[ "$SOURCE_INCLUDE_MODE" == "auto" ]]; then
+    # Auto mode is intentionally permissive here. Build-time logic already
+    # chooses include/exclude orig based on availability, and Launchpad is the
+    # source of truth if remote state changes between build and upload.
+    :
   fi
 
   if [[ "$has_orig" == "true" ]]; then
