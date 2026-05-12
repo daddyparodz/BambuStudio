@@ -228,6 +228,28 @@ prepare_source_tree() {
     if [[ -f "$source_dir/debian/source/lintian-overrides" ]]; then
       sed -i "s/^bambustudio source:/${SOURCE_PACKAGE_NAME} source:/g" "$source_dir/debian/source/lintian-overrides"
     fi
+    rm -f "$source_dir/debian/manpages" "$source_dir/debian/bambustudio.1"
+    cat > "$source_dir/debian/${WRAPPER_CMD}.1" <<EOF
+.TH ${WRAPPER_CMD^^} 1 "May 2026" "${WRAPPER_CMD}" "User Commands"
+.SH NAME
+${WRAPPER_CMD} \\- launch Bambu Studio
+.SH SYNOPSIS
+.B ${WRAPPER_CMD}
+[\\fIarguments\\fR]
+.SH DESCRIPTION
+.B ${WRAPPER_CMD}
+launches the repackaged official Bambu Studio AppImage installed by this
+package.
+.SH FILES
+.TP
+.I ${INSTALL_DIR}/BambuStudio.AppImage
+Bundled upstream AppImage.
+.SH AUTHOR
+Packaging maintained by daddyparodz.
+EOF
+    cat > "$source_dir/debian/${BINARY_PACKAGE_NAME}.manpages" <<EOF
+debian/${WRAPPER_CMD}.1
+EOF
 
     rm -f "$source_dir/debian/bambustudio.install"
     cat > "$source_dir/debian/${BINARY_PACKAGE_NAME}.install" <<EOF
@@ -276,8 +298,14 @@ EOF
 set -euo pipefail
 
 APPIMAGE=@INSTALL_DIR@/BambuStudio.AppImage
+DESKTOP_FILE_PATH=/usr/share/applications/@DESKTOP_FILE@
 export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}"
 export SSL_CERT_DIR="${SSL_CERT_DIR:-/etc/ssl/certs}"
+
+# Help Ubuntu/GNOME taskbar match the running window to this desktop entry.
+if [[ -f "$DESKTOP_FILE_PATH" ]]; then
+  export BAMF_DESKTOP_FILE_HINT="$DESKTOP_FILE_PATH"
+fi
 
 if command -v xdg-mime >/dev/null 2>&1; then
   if [[ "$(xdg-mime query default x-scheme-handler/bambustudioopen 2>/dev/null || true)" != "@DESKTOP_FILE@" ]]; then
@@ -307,7 +335,7 @@ Categories=Graphics;3DGraphics;Engineering;
 MimeType=model/stl;model/3mf;application/vnd.ms-3mfdocument;application/prs.wavefront-obj;application/x-amf;x-scheme-handler/bambustudio;x-scheme-handler/bambustudioopen;
 Keywords=3D;Printing;Slicer;slice;3D;printer;convert;gcode;stl;obj;amf;SLA
 StartupNotify=false
-StartupWMClass=bambu-studio
+StartupWMClass=BambuStudio
 X-AppImage-Version=${VERSION}
 EOF
 
@@ -333,6 +361,28 @@ EOF
     if [[ -f "$source_dir/debian/source/lintian-overrides" ]]; then
       sed -i "s/^bambustudio source:/${SOURCE_PACKAGE_NAME} source:/g" "$source_dir/debian/source/lintian-overrides"
     fi
+    rm -f "$source_dir/debian/manpages" "$source_dir/debian/bambustudio.1"
+    cat > "$source_dir/debian/${WRAPPER_CMD}.1" <<EOF
+.TH ${WRAPPER_CMD^^} 1 "May 2026" "${WRAPPER_CMD}" "User Commands"
+.SH NAME
+${WRAPPER_CMD} \\- launch Bambu Studio
+.SH SYNOPSIS
+.B ${WRAPPER_CMD}
+[\\fIarguments\\fR]
+.SH DESCRIPTION
+.B ${WRAPPER_CMD}
+launches the repackaged official Bambu Studio AppImage installed by this
+package.
+.SH FILES
+.TP
+.I ${INSTALL_DIR}/BambuStudio.AppImage
+Bundled upstream AppImage.
+.SH AUTHOR
+Packaging maintained by daddyparodz.
+EOF
+    cat > "$source_dir/debian/${BINARY_PACKAGE_NAME}.manpages" <<EOF
+debian/${WRAPPER_CMD}.1
+EOF
     rm -f "$source_dir/debian/bambustudio.install"
     cat > "$source_dir/debian/${BINARY_PACKAGE_NAME}.install" <<EOF
 BambuStudio.AppImage ${INSTALL_DIR}/
