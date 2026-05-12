@@ -79,7 +79,35 @@ for changes in "${changes_files[@]}"; do
     test -f "$staged_desktop"
   )
 
-  if [[ "$SOURCE_INCLUDE_MODE" == "exclude-orig" ]] || { [[ "$SOURCE_INCLUDE_MODE" == "auto" ]] && (( PPA_REVISION > 1 )); }; then
+  expect_exclude_orig=false
+  case "$SOURCE_INCLUDE_MODE" in
+    exclude-orig)
+      expect_exclude_orig=true
+      ;;
+    include-orig)
+      expect_exclude_orig=false
+      ;;
+    auto)
+      if (( PPA_REVISION > 1 )); then
+        # Mirror build-source-package.sh behavior:
+        # In auto mode we exclude orig only when the exact orig is already in PPA.
+        package_name="$(awk '$1=="Source:"{print $2; exit}' "$dsc")"
+        dsc_version="$(awk '$1=="Version:"{print $2; exit}' "$dsc")"
+        upstream_plus_series="${dsc_version%%-*}"
+        source_base_url="https://ppa.launchpadcontent.net/daddyparodz/bambustudio/ubuntu/pool/main/${package_name:0:1}/${package_name}"
+        orig_url="${source_base_url}/${package_name}_${upstream_plus_series}.orig.tar.xz"
+        if curl -fsI "$orig_url" >/dev/null; then
+          expect_exclude_orig=true
+        fi
+      fi
+      ;;
+    *)
+      echo "Unsupported SOURCE_INCLUDE_MODE: $SOURCE_INCLUDE_MODE" >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "$expect_exclude_orig" == "true" ]]; then
     echo "Checking .changes excludes .orig.tar for $pkg_base"
     if grep -qE '\.orig\.tar\.(gz|bz2|xz|lzma)$' "$changes"; then
       echo "Found forbidden orig tarball entry in $changes for PPA_REVISION=${PPA_REVISION}" >&2
