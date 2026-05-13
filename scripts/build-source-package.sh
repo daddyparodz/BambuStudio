@@ -267,7 +267,7 @@ EOF
     cat > "$source_dir/debian/${BINARY_PACKAGE_NAME}.install" <<EOF
 BambuStudio.AppImage ${INSTALL_DIR}/
 ${WRAPPER_CMD} usr/bin/
-${DESKTOP_FILE} usr/share/applications/
+debian/${DESKTOP_FILE} usr/share/applications/
 ${ICON_BASENAME}.png usr/share/pixmaps/
 icons/32x32/apps/${ICON_BASENAME}.png usr/share/icons/hicolor/32x32/apps/
 icons/128x128/apps/${ICON_BASENAME}.png usr/share/icons/hicolor/128x128/apps/
@@ -333,24 +333,6 @@ EOF
       "$launcher_path"
     chmod 0755 "$launcher_path"
 
-    desktop_path="$source_dir/${DESKTOP_FILE}"
-    cat > "$desktop_path" <<EOF
-[Desktop Entry]
-Name=${DESKTOP_NAME}
-GenericName=3D Printing Software
-Comment=${DESKTOP_COMMENT}
-Exec=/usr/bin/${WRAPPER_CMD} %U
-Icon=${ICON_BASENAME}
-Terminal=false
-Type=Application
-Categories=Graphics;3DGraphics;Engineering;
-MimeType=model/stl;model/3mf;application/vnd.ms-3mfdocument;application/prs.wavefront-obj;application/x-amf;x-scheme-handler/bambustudio;x-scheme-handler/bambustudioopen;
-Keywords=3D;Printing;Slicer;slice;3D;printer;convert;gcode;stl;obj;amf;SLA
-StartupNotify=false
-StartupWMClass=BambuStudio
-X-AppImage-Version=${VERSION}
-EOF
-
     cat > "$source_dir/debian/changelog" <<EOF
 ${SOURCE_PACKAGE_NAME} (${package_version}) ${series}; urgency=medium
 
@@ -399,7 +381,7 @@ EOF
     cat > "$source_dir/debian/${BINARY_PACKAGE_NAME}.install" <<EOF
 BambuStudio.AppImage ${INSTALL_DIR}/
 ${WRAPPER_CMD} usr/bin/
-${DESKTOP_FILE} usr/share/applications/
+debian/${DESKTOP_FILE} usr/share/applications/
 ${ICON_BASENAME}.png usr/share/pixmaps/
 icons/32x32/apps/${ICON_BASENAME}.png usr/share/icons/hicolor/32x32/apps/
 icons/128x128/apps/${ICON_BASENAME}.png usr/share/icons/hicolor/128x128/apps/
@@ -422,6 +404,26 @@ ${SOURCE_PACKAGE_NAME} (${package_version}) ${series}; urgency=medium
  -- ${MAINTAINER_NAME} <${MAINTAINER_EMAIL}>  ${CHANGELOG_DATE}
 EOF
   fi
+
+  # Always regenerate desktop file so rebuilds do not carry stale metadata from
+  # reused source trees (for example wrong Icon value in beta).
+  desktop_path="$source_dir/debian/${DESKTOP_FILE}"
+  cat > "$desktop_path" <<EOF
+[Desktop Entry]
+Name=${DESKTOP_NAME}
+GenericName=3D Printing Software
+Comment=${DESKTOP_COMMENT}
+Exec=/usr/bin/${WRAPPER_CMD} %U
+Icon=${ICON_BASENAME}
+Terminal=false
+Type=Application
+Categories=Graphics;3DGraphics;Engineering;
+MimeType=model/stl;model/3mf;application/vnd.ms-3mfdocument;application/prs.wavefront-obj;application/x-amf;x-scheme-handler/bambustudio;x-scheme-handler/bambustudioopen;
+Keywords=3D;Printing;Slicer;slice;3D;printer;convert;gcode;stl;obj;amf;SLA
+StartupNotify=false
+StartupWMClass=BambuStudio
+X-AppImage-Version=${VERSION}
+EOF
 
   if [[ "$CHANNEL" == "beta" ]]; then
     if [[ -f "$source_dir/BambuStudio.png" && ! -f "$source_dir/BambuStudioBeta.png" ]]; then
