@@ -50,7 +50,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl jq devscripts debhelper dput gnupg xz-utils desktop-file-utils xdg-utils distro-info-data
+          sudo apt-get install -y build-essential curl jq devscripts debhelper dput gnupg xz-utils desktop-file-utils xdg-utils distro-info-data python3-launchpadlib
+          python3 -c "from launchpadlib.launchpad import Launchpad"
 
       - name: Determine upstream tag
         id: upstream
@@ -98,6 +99,8 @@ jobs:
           upstream_version="${current_tag#v}"
           current_commit="${{ github.sha }}"
           revision_override="${{ steps.settings.outputs.revision_override }}"
+          repo_content_changed=false
+          changed_non_state_files=""
           if [[ -n "${{ inputs.series }}" ]]; then
             series_list="${{ inputs.series }}"
           else
@@ -131,6 +134,33 @@ jobs:
             base_revision="$recorded_revision"
           fi
 
+          if [[ -n "$recorded_commit" ]] && git rev-parse --verify -q "$recorded_commit^{commit}" >/dev/null; then
+            if git merge-base --is-ancestor "$recorded_commit" "$current_commit"; then
+              changed_non_state_files="$(
+                git diff --name-only "$recorded_commit..$current_commit" \
+                  | grep -Ev '^state/latest-[a-z0-9-]+-(tag|commit|revision)\.txt$' \
+                  || true
+              )"
+              if [[ -n "$changed_non_state_files" ]]; then
+                repo_content_changed=true
+              fi
+            else
+              # History rewrite or divergent marker commit: play safe and publish once.
+              repo_content_changed=true
+            fi
+          elif [[ -n "$recorded_commit" ]]; then
+            # Marker points to commit not reachable from current history: publish once.
+            repo_content_changed=true
+          fi
+
+          if [[ -n "$changed_non_state_files" ]]; then
+            echo "Changed non-state files since marker:"
+            printf '%s\n' "$changed_non_state_files"
+          else
+            echo "Changed non-state files since marker: (none)"
+          fi
+          echo "Repo content changed since marker (excluding state files): ${repo_content_changed}"
+
           # Respect explicit manual override when provided.
           if [[ -n "$revision_override" ]]; then
             if ! [[ "$revision_override" =~ ^[0-9]+$ ]]; then
@@ -151,8 +181,8 @@ jobs:
               revision=1
             fi
             skip=false
-          elif [[ "$recorded_commit" != "$current_commit" ]]; then
-            # Same upstream tag but packaging repo changed: bump revision.
+          elif [[ "$repo_content_changed" == "true" ]]; then
+            # Same upstream tag but packaging repo content changed: bump revision.
             revision=$((base_revision + 1))
             skip=false
           elif (( archive_max_revision > recorded_revision )); then
@@ -222,7 +252,13 @@ jobs:
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
         env:
           PPA_REVISION: ${{ steps.state.outputs.revision }}
+          LAUNCHPAD_CREDENTIALS: ${{ secrets.LAUNCHPAD_CREDENTIALS }}
         run: |
+          bash ./scripts/prune-ppa.sh \
+            --owner daddyparodz \
+            --archive bambustudio \
+            --package bambustudio \
+            --package bambustudio-beta
           echo "Starting Launchpad source upload..."
           ./scripts/upload-ppa.sh dist/*_source.changes
           echo "Launchpad source upload completed."
