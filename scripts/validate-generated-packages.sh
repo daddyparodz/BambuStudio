@@ -62,9 +62,11 @@ for changes in "${changes_files[@]}"; do
     if [[ "$staged_appimg" == *"/opt/bambustudio-beta/"* ]]; then
       staged_wrapper="debroot/usr/bin/bambustudio-beta"
       staged_desktop="debroot/usr/share/applications/bambustudio-beta.desktop"
+      expected_icon="BambuStudioBeta"
     else
       staged_wrapper="debroot/usr/bin/bambustudio"
       staged_desktop="debroot/usr/share/applications/bambustudio.desktop"
+      expected_icon="BambuStudio"
     fi
     staged_size="$(stat -c '%s' "$staged_appimg")"
     echo "Validating built deb AppImage for $pkg_base (size=$staged_size)"
@@ -77,6 +79,21 @@ for changes in "${changes_files[@]}"; do
     test -f squashfs-root/AppRun
     test -x "$staged_wrapper"
     test -f "$staged_desktop"
+
+    # Validate desktop icon metadata and ensure the icon payload exists.
+    desktop_icon="$(awk -F= '$1=="Icon"{print $2; exit}' "$staged_desktop" | tr -d '\r')"
+    if [[ -z "$desktop_icon" ]]; then
+      echo "Desktop file missing Icon= entry in $staged_desktop for $pkg_base" >&2
+      exit 1
+    fi
+    if [[ "$desktop_icon" != "$expected_icon" ]]; then
+      echo "Unexpected Icon= value '$desktop_icon' in $staged_desktop (expected '$expected_icon') for $pkg_base" >&2
+      exit 1
+    fi
+    if [[ ! -f "debroot/usr/share/pixmaps/${desktop_icon}.png" ]]; then
+      echo "Missing icon file debroot/usr/share/pixmaps/${desktop_icon}.png for $pkg_base" >&2
+      exit 1
+    fi
   )
 
   expect_exclude_orig=false
