@@ -2,6 +2,9 @@
 set -euo pipefail
 
 PPA_TARGET="${PPA_TARGET:-ppa:daddyparodz/bambustudio}"
+PPA_UPLOAD_METHOD="${PPA_UPLOAD_METHOD:-auto}"
+LAUNCHPAD_SFTP_LOGIN="${LAUNCHPAD_SFTP_LOGIN:-}"
+LAUNCHPAD_SSH_PRIVATE_KEY="${LAUNCHPAD_SSH_PRIVATE_KEY:-}"
 UPLOAD_RETRIES="${UPLOAD_RETRIES:-8}"
 RETRY_DELAY_SECONDS="${RETRY_DELAY_SECONDS:-30}"
 MAX_RETRY_DELAY_SECONDS="${MAX_RETRY_DELAY_SECONDS:-300}"
@@ -13,6 +16,65 @@ if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <source.changes> [<source.changes> ...]" >&2
   exit 1
 fi
+
+setup_sftp_target() {
+  local target="$1"
+  if [[ ! "$target" =~ ^ppa:([^/]+)/([^/]+)$ ]]; then
+    echo "SFTP mode requires PPA_TARGET in ppa:<owner>/<archive> format (got: $target)" >&2
+    return 1
+  fi
+  local owner="${BASH_REMATCH[1]}"
+  local archive="${BASH_REMATCH[2]}"
+  local login="$LAUNCHPAD_SFTP_LOGIN"
+  if [[ -z "$login" ]]; then
+    login="$owner"
+  fi
+
+  mkdir -p "$HOME/.ssh"
+  chmod 700 "$HOME/.ssh"
+  printf '%s\n' "$LAUNCHPAD_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_launchpad_upload"
+  chmod 600 "$HOME/.ssh/id_launchpad_upload"
+  ssh-keyscan -H ppa.launchpad.net >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+  chmod 600 "$HOME/.ssh/known_hosts"
+
+  cat > "$HOME/.dput.cf" <<EOF
+[launchpad-sftp]
+fqdn = ppa.launchpad.net
+method = sftp
+incoming = ~${owner}/ubuntu/${archive}/
+login = ${login}
+allow_unsigned_uploads = 0
+EOF
+}
+
+upload_target="$PPA_TARGET"
+case "$PPA_UPLOAD_METHOD" in
+  auto)
+    if [[ -n "$LAUNCHPAD_SSH_PRIVATE_KEY" ]]; then
+      setup_sftp_target "$PPA_TARGET"
+      upload_target="launchpad-sftp"
+      echo "Upload transport: sftp (auto-selected)"
+    else
+      echo "Upload transport: ftp (auto-selected)"
+    fi
+    ;;
+  sftp)
+    if [[ -z "$LAUNCHPAD_SSH_PRIVATE_KEY" ]]; then
+      echo "PPA_UPLOAD_METHOD=sftp but LAUNCHPAD_SSH_PRIVATE_KEY is not set" >&2
+      exit 1
+    fi
+    setup_sftp_target "$PPA_TARGET"
+    upload_target="launchpad-sftp"
+    echo "Upload transport: sftp (forced)"
+    ;;
+  ftp)
+    echo "Upload transport: ftp (forced)"
+    ;;
+  *)
+    echo "Unsupported PPA_UPLOAD_METHOD: $PPA_UPLOAD_METHOD" >&2
+    exit 1
+    ;;
+esac
 
 for changes_file in "$@"; do
   echo "Pre-upload source check for ${changes_file}"
@@ -39,13 +101,13 @@ for changes_file in "$@"; do
     echo "Pre-upload source check: .changes excludes orig tarball"
   fi
 
-  echo "Uploading ${changes_file} to ${PPA_TARGET}..."
+  echo "Uploading ${changes_file} to ${upload_target}..."
   attempt=1
   delay="$RETRY_DELAY_SECONDS"
   while true; do
     upload_log="$(mktemp)"
     dput_rc=0
-    if timeout --preserve-status "$DPUT_TIMEOUT_SECONDS" dput "$PPA_TARGET" "$changes_file" 2>&1 | tee "$upload_log"; then
+    if timeout --preserve-status "$DPUT_TIMEOUT_SECONDS" dput "$upload_target" "$changes_file" 2>&1 | tee "$upload_log"; then
       rm -f "$upload_log"
       break
     else

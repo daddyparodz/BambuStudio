@@ -253,6 +253,9 @@ jobs:
         env:
           PPA_REVISION: ${{ steps.state.outputs.revision }}
           LAUNCHPAD_CREDENTIALS: ${{ secrets.LAUNCHPAD_CREDENTIALS }}
+          LAUNCHPAD_SSH_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_SSH_PRIVATE_KEY }}
+          LAUNCHPAD_SFTP_LOGIN: daddyparodz
+          PPA_UPLOAD_METHOD: auto
         run: |
           bash ./scripts/prune-ppa.sh \
             --owner daddyparodz \
