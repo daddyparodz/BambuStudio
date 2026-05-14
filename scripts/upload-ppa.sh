@@ -34,6 +34,14 @@ setup_sftp_target() {
   chmod 700 "$HOME/.ssh"
   printf '%s\n' "$LAUNCHPAD_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_launchpad_upload"
   chmod 600 "$HOME/.ssh/id_launchpad_upload"
+  cat > "$HOME/.ssh/config" <<EOF
+Host ppa.launchpad.net
+  User ${login}
+  IdentityFile ~/.ssh/id_launchpad_upload
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+EOF
+  chmod 600 "$HOME/.ssh/config"
   ssh-keyscan -H ppa.launchpad.net >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
   chmod 600 "$HOME/.ssh/known_hosts"
 
