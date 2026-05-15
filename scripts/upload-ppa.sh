@@ -8,7 +8,7 @@ LAUNCHPAD_SSH_PRIVATE_KEY="${LAUNCHPAD_SSH_PRIVATE_KEY:-}"
 UPLOAD_RETRIES="${UPLOAD_RETRIES:-8}"
 RETRY_DELAY_SECONDS="${RETRY_DELAY_SECONDS:-30}"
 MAX_RETRY_DELAY_SECONDS="${MAX_RETRY_DELAY_SECONDS:-300}"
-DPUT_TIMEOUT_SECONDS="${DPUT_TIMEOUT_SECONDS:-240}"
+DPUT_TIMEOUT_SECONDS="${DPUT_TIMEOUT_SECONDS:-1200}"
 PPA_REVISION="${PPA_REVISION:-1}"
 SOURCE_INCLUDE_MODE="${SOURCE_INCLUDE_MODE:-auto}"
 
@@ -110,41 +110,53 @@ for changes_file in "$@"; do
   fi
 
   echo "Uploading ${changes_file} to ${upload_target}..."
-  attempt=1
-  delay="$RETRY_DELAY_SECONDS"
-  while true; do
-    upload_log="$(mktemp)"
-    dput_rc=0
-    if timeout --preserve-status "$DPUT_TIMEOUT_SECONDS" dput "$upload_target" "$changes_file" 2>&1 | tee "$upload_log"; then
-      rm -f "$upload_log"
-      break
-    else
-      dput_rc=$?
-    fi
-
-    # Retry only on known transient Launchpad/dput transport failures.
-    if (( dput_rc == 124 || dput_rc == 137 )); then
-      echo "dput timed out after ${DPUT_TIMEOUT_SECONDS}s (attempt ${attempt})" >&2
-    elif ! grep -qE '550 Requested action not taken: internal server error|temporary failure|timed out|Connection reset|Network is unreachable|Connection timed out|Could not connect|TLS handshake|EOF' "$upload_log"; then
-      echo "Non-retryable upload failure for ${changes_file} on attempt ${attempt}." >&2
-      rm -f "$upload_log"
-      exit 1
-    fi
-    rm -f "$upload_log"
-
-    if (( attempt >= UPLOAD_RETRIES )); then
-      echo "Upload failed after ${attempt} attempts: ${changes_file}" >&2
-      exit 1
-    fi
-
-    echo "Upload attempt ${attempt} failed for ${changes_file}; retrying in ${delay}s..." >&2
-    sleep "$delay"
-    if (( delay < MAX_RETRY_DELAY_SECONDS )); then
-      delay=$((delay * 2))
-      if (( delay > MAX_RETRY_DELAY_SECONDS )); then
-        delay="$MAX_RETRY_DELAY_SECONDS"
+  perform_upload() {
+    local target="$1"
+    local attempt=1
+    local delay="$RETRY_DELAY_SECONDS"
+    while true; do
+      upload_log="$(mktemp)"
+      dput_rc=0
+      if timeout --preserve-status "$DPUT_TIMEOUT_SECONDS" dput "$target" "$changes_file" 2>&1 | tee "$upload_log"; then
+        rm -f "$upload_log"
+        return 0
+      else
+        dput_rc=$?
       fi
-    fi
-    attempt=$((attempt + 1))
-  done
+
+      # timeout with --preserve-status may return 124, or child signal exit (>=128).
+      if (( dput_rc == 124 || dput_rc >= 128 )); then
+        echo "dput timed out/terminated after ${DPUT_TIMEOUT_SECONDS}s (attempt ${attempt}, rc=${dput_rc})" >&2
+      elif ! grep -qE '550 Requested action not taken: internal server error|temporary failure|timed out|Connection reset|Network is unreachable|Connection timed out|Could not connect|TLS handshake|EOF|Broken pipe|Connection closed|Failure writing network stream' "$upload_log"; then
+        echo "Non-retryable upload failure for ${changes_file} on attempt ${attempt} (target=${target})." >&2
+        rm -f "$upload_log"
+        return 1
+      fi
+      rm -f "$upload_log"
+
+      if (( attempt >= UPLOAD_RETRIES )); then
+        echo "Upload failed after ${attempt} attempts: ${changes_file} (target=${target})" >&2
+        return 2
+      fi
+
+      echo "Upload attempt ${attempt} failed for ${changes_file}; retrying in ${delay}s..." >&2
+      sleep "$delay"
+      if (( delay < MAX_RETRY_DELAY_SECONDS )); then
+        delay=$((delay * 2))
+        if (( delay > MAX_RETRY_DELAY_SECONDS )); then
+          delay="$MAX_RETRY_DELAY_SECONDS"
+        fi
+      fi
+      attempt=$((attempt + 1))
+    done
+  }
+
+  if perform_upload "$upload_target"; then
+    :
+  elif [[ "$upload_target" == "launchpad-sftp" && "$PPA_UPLOAD_METHOD" == "auto" ]]; then
+    echo "SFTP upload exhausted retries; falling back to ftp target ${PPA_TARGET}." >&2
+    perform_upload "$PPA_TARGET"
+  else
+    exit 1
+  fi
 done
