@@ -114,20 +114,43 @@ jobs:
           fi
 
           archive_max_revision=0
-          for series in $series_list; do
-            src_url="https://ppa.launchpadcontent.net/daddyparodz/bambustudio/ubuntu/dists/${series}/main/source/Sources.gz"
-            while IFS= read -r ver; do
-              if [[ "$ver" =~ ^${upstream_version}\+[[:alnum:]]+-0ppa([0-9]+)~ ]]; then
-                n="${BASH_REMATCH[1]}"
-                if (( n > archive_max_revision )); then
-                  archive_max_revision="$n"
-                fi
-              fi
-            done < <(curl -fsSL "$src_url" | gzip -dc | awk -v pkg="$source_package_name" '
-              $1=="Package:" {in_pkg=($2==pkg); next}
-              in_pkg && $1=="Version:" {print $2}
-            ' || true)
-          done
+          # Use Launchpad API (Pending + Published) so we do not miss freshly
+          # accepted uploads that may not yet be visible in Sources.gz.
+          while IFS= read -r n; do
+            if [[ "$n" =~ ^[0-9]+$ ]] && (( n > archive_max_revision )); then
+              archive_max_revision="$n"
+            fi
+          done < <(SOURCE_PACKAGE_NAME="$source_package_name" UPSTREAM_VERSION="$upstream_version" SERIES_LIST="$series_list" python3 - <<'PY'
+          import json, os, re, urllib.parse, urllib.request
+          source_package_name = os.environ["SOURCE_PACKAGE_NAME"]
+          upstream_version = os.environ["UPSTREAM_VERSION"]
+          series_list = os.environ["SERIES_LIST"].split()
+          base = "https://api.launchpad.net/1.0/~daddyparodz/+archive/ubuntu/bambustudio"
+          statuses = ("Pending", "Published")
+          rx = re.compile(rf"^{re.escape(upstream_version)}\+[A-Za-z0-9]+-0ppa([0-9]+)~")
+          for series in series_list:
+            for st in statuses:
+              qs = urllib.parse.urlencode({
+                "ws.op": "getPublishedSources",
+                "source_name": source_package_name,
+                "exact_match": "true",
+                "distro_series": f"https://api.launchpad.net/1.0/ubuntu/{series}",
+                "status": st,
+                "order_by_date": "true",
+              })
+              url = f"{base}?{qs}"
+              try:
+                with urllib.request.urlopen(url, timeout=30) as r:
+                  data = json.load(r)
+              except Exception:
+                continue
+              for e in data.get("entries", []):
+                v = e.get("source_package_version", "")
+                m = rx.match(v)
+                if m:
+                  print(m.group(1))
+          PY
+          )
           echo "Archive max revision for ${source_package_name} ${current_tag}: ${archive_max_revision}"
 
           if (( archive_max_revision > recorded_revision )); then
@@ -283,7 +306,17 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$marker_file" "$commit_file" "$revision_file"
           git commit -m "chore: record ${{ steps.upstream.outputs.channel }} packaged release ${{ steps.upstream.outputs.tag }}-0ppa${{ steps.state.outputs.revision }}" || exit 0
-          git push
+          # Resolve transient non-fast-forward races caused by concurrent runs.
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "Marker push failed after retries." >&2
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Cleanup old workflow artifacts
         if: always()
