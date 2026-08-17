@@ -301,7 +301,6 @@ jobs:
 
       - name: Update packaged release marker
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true' && success() && github.ref == 'refs/heads/main'
-        continue-on-error: true
         run: |
           channel="${{ steps.upstream.outputs.channel }}"
           marker_file="state/latest-${channel}-tag.txt"
