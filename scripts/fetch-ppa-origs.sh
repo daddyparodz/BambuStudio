@@ -16,6 +16,9 @@ Fetches the exact existing orig tarball for each Ubuntu series. It first uses th
 public PPA pool. If a file was removed from the pool by an earlier retention
 mistake, it asks Launchpad for recently deleted/superseded source publications
 and downloads the retained Librarian copy.
+
+Exit status 3 means there is no historical publication for the requested
+upstream version/series, so callers may safely create and upload a new orig.
 EOF
   exit 2
 }
@@ -162,6 +165,7 @@ for series in series_list:
 
     wanted_prefix = f"{series_upstream}-0ppa"
     recovered = False
+    historical_match_seen = False
     for status in ("Pending", "Published", "Superseded", "Deleted"):
         try:
             entries = source_entries(series, status)
@@ -173,6 +177,8 @@ for series in series_list:
             entry for entry in entries
             if str(entry.get("source_package_version", "")).startswith(wanted_prefix)
         ]
+        if matches:
+            historical_match_seen = True
         matches.sort(
             key=lambda entry: (
                 str(entry.get("date_created", "")),
@@ -222,12 +228,21 @@ for series in series_list:
         if recovered:
             break
 
-    if not recovered:
-        raise SystemExit(
-            f"Unable to recover exact existing orig tarball for {package}/{series}: {filename}. "
-            "Refusing to regenerate an orig with the same upstream filename because Launchpad "
-            "rejects same-name orig files whose contents differ."
+    if recovered:
+        continue
+    if not historical_match_seen:
+        print(
+            f"ORIG NEW: no historical {package}/{series} publication exists for {series_upstream}; "
+            "caller may create a new orig tarball.",
+            flush=True,
         )
+        raise SystemExit(3)
+
+    raise SystemExit(
+        f"Unable to recover exact existing orig tarball for {package}/{series}: {filename}. "
+        "Refusing to regenerate an orig with the same upstream filename because Launchpad "
+        "rejects same-name orig files whose contents differ."
+    )
 
 print(f"Recovered all required orig tarballs into {outdir}", flush=True)
 PY
