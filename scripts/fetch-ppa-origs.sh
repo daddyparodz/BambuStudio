@@ -14,8 +14,8 @@ Usage: fetch-ppa-origs.sh --package NAME --upstream-version VERSION --series "ja
 
 Fetches the exact existing orig tarball for each Ubuntu series. It first uses the
 public PPA pool. If a file was removed from the pool by an earlier retention
-mistake, it asks Launchpad for recently deleted/superseded source publications
-and downloads the retained Librarian copy.
+mistake, it asks Launchpad for historical source publications and downloads the
+retained Librarian copy.
 
 Exit status 3 means all relevant Launchpad history queries completed and there
 is no historical publication for the requested upstream version/series, so
@@ -208,7 +208,7 @@ for series in series_list:
     historical_match_seen = False
     history_query_failed = False
 
-    for status in ("Pending", "Published", "Superseded", "Deleted"):
+    for status in ("Pending", "Published", "Superseded", "Deleted", "Obsolete"):
         try:
             entries = source_entries(series, status)
         except Exception as exc:
