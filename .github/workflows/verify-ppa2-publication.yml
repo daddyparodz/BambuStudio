@@ -36,23 +36,32 @@ jobs:
           }
 
           def get_json(url):
-              req = urllib.request.Request(
-                  url,
-                  headers={"Accept": "application/json", "User-Agent": "bambustudio-ci-verify"},
-              )
-              with urllib.request.urlopen(req, timeout=30) as response:
-                  return json.load(response)
+              delay = 2
+              for attempt in range(1, 6):
+                  try:
+                      req = urllib.request.Request(
+                          url,
+                          headers={"Accept": "application/json", "User-Agent": "bambustudio-ci-verify"},
+                      )
+                      with urllib.request.urlopen(req, timeout=20) as response:
+                          return json.load(response)
+                  except Exception as exc:
+                      if attempt == 5:
+                          raise
+                      print(f"Launchpad API attempt {attempt} failed: {exc}; retrying in {delay}s", flush=True)
+                      time.sleep(delay)
+                      delay = min(delay * 2, 20)
 
-          def source_records(package, series):
+          def source_records(package):
               records = []
               for status in ("Pending", "Published"):
                   qs = urllib.parse.urlencode({
                       "ws.op": "getPublishedSources",
                       "source_name": package,
                       "exact_match": "true",
-                      "distro_series": f"https://api.launchpad.net/1.0/ubuntu/{series}",
                       "status": status,
                       "order_by_date": "true",
+                      "ws.size": 100,
                   })
                   data = get_json(f"{BASE}?{qs}")
                   for entry in data.get("entries", []):
@@ -75,22 +84,30 @@ jobs:
               for series, version in series_map.items()
           }
           pending_sources = set(expected_sources)
-          source_deadline = time.monotonic() + 900
+          source_deadline = time.monotonic() + 1200
+          seen_sources = set()
 
           while pending_sources:
-              for package, series, version in sorted(tuple(pending_sources)):
-                  matches = [
-                      record
-                      for record in source_records(package, series)
-                      if record.get("source_package_version") == version
-                  ]
-                  if matches:
-                      statuses = sorted({
-                          record.get("status") or record.get("queried_status")
-                          for record in matches
-                      })
-                      print(f"SOURCE OK: {package} {series} {version} statuses={statuses}", flush=True)
-                      pending_sources.discard((package, series, version))
+              for package in EXPECTED:
+                  records = source_records(package)
+                  by_version = {}
+                  for record in records:
+                      by_version.setdefault(record.get("source_package_version"), []).append(record)
+
+                  for series, version in EXPECTED[package].items():
+                      key = (package, series, version)
+                      if key not in pending_sources:
+                          continue
+                      matches = by_version.get(version, [])
+                      if matches:
+                          statuses = sorted({
+                              record.get("status") or record.get("queried_status")
+                              for record in matches
+                          })
+                          if key not in seen_sources:
+                              print(f"SOURCE OK: {package} {series} {version} statuses={statuses}", flush=True)
+                              seen_sources.add(key)
+                          pending_sources.discard(key)
 
               if not pending_sources:
                   break
