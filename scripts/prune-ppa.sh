@@ -129,6 +129,7 @@ export PRUNE_DRY_RUN="$DRY_RUN"
 python3 <<'PY'
 import os
 import sys
+from collections import defaultdict
 
 from launchpadlib.launchpad import Launchpad
 
@@ -139,6 +140,13 @@ def publication_sort_key(pub):
         str(getattr(pub, "date_created", "") or ""),
         str(getattr(pub, "self_link", "") or ""),
     )
+
+
+def series_name(pub):
+    series = getattr(pub, "distro_series", None)
+    if series is None:
+        return "unknown"
+    return str(getattr(series, "name", "") or getattr(series, "self_link", "") or "unknown")
 
 
 owner = os.environ["PRUNE_OWNER"]
@@ -166,29 +174,32 @@ for pkg in packages:
             order_by_date=True,
         )
     )
-    pubs.sort(key=publication_sort_key, reverse=True)
 
     if not pubs:
         print(f"{pkg}: no published sources found")
         continue
 
-    keep = pubs[0]
-    keep_version = getattr(keep, "source_package_version", "<unknown>")
-    print(f"{pkg}: keeping {keep_version}")
+    by_series = defaultdict(list)
+    for pub in pubs:
+        by_series[series_name(pub)].append(pub)
 
-    for old in pubs[1:]:
-        old_version = getattr(old, "source_package_version", "<unknown>")
-        old_series = getattr(old, "distro_series", None)
-        old_series_name = getattr(old_series, "name", "unknown") if old_series else "unknown"
-        print(f"{pkg}: deleting {old_version} ({old_series_name})")
-        if not dry_run:
-            old.requestDeletion(
-                removal_comment=(
-                    "Automated PPA retention policy: keep only latest published "
-                    f"source for {pkg}."
+    for series, series_pubs in sorted(by_series.items()):
+        series_pubs.sort(key=publication_sort_key, reverse=True)
+        keep = series_pubs[0]
+        keep_version = getattr(keep, "source_package_version", "<unknown>")
+        print(f"{pkg}/{series}: keeping {keep_version}")
+
+        for old in series_pubs[1:]:
+            old_version = getattr(old, "source_package_version", "<unknown>")
+            print(f"{pkg}/{series}: deleting {old_version}")
+            if not dry_run:
+                old.requestDeletion(
+                    removal_comment=(
+                        "Automated PPA retention policy: keep only the latest "
+                        f"published source for {pkg} in Ubuntu {series}."
+                    )
                 )
-            )
-        deleted += 1
+            deleted += 1
 
 print(f"Done. deletion requests sent: {deleted}")
 sys.exit(0)
