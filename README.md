@@ -89,7 +89,7 @@ Runner requirements:
 - outbound network access required for GitHub, Ubuntu package mirrors, upstream Bambu Studio release assets, Docker Hub, and Launchpad
 - if the runner application itself is containerized, it must have access to a Docker daemon capable of starting GitHub Actions job containers
 
-Fork-originated pull requests are not executed on self-hosted infrastructure. Same-repository pull requests run the full packaging validation and a non-uploading stable PPA dry run on the self-hosted container runner.
+Fork-originated pull requests are not executed on self-hosted infrastructure. Same-repository pull requests run the full packaging validation plus non-uploading stable and beta PPA dry runs on the self-hosted container runner.
 
 ## PPA Retention
 
