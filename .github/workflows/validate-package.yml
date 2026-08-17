@@ -40,17 +40,21 @@ jobs:
             ca-certificates \
             curl \
             debhelper \
+            desktop-file-utils \
             devscripts \
             distro-info \
             distro-info-data \
             dput \
+            gh \
             git \
+            gnupg \
             jq \
             lintian \
+            openssh-client \
             python3 \
+            python3-launchpadlib \
             xdg-utils \
-            xz-utils \
-            desktop-file-utils
+            xz-utils
           rm -rf /var/lib/apt/lists/*
 
           command -v bash
@@ -59,10 +63,17 @@ jobs:
           command -v dpkg-buildpackage
           command -v dpkg-deb
           command -v dpkg-source
+          command -v dput
+          command -v gh
           command -v git
+          command -v gpg
           command -v jq
           command -v lintian
+          command -v python3
+          command -v ssh
+          command -v ssh-keyscan
           command -v ubuntu-distro-info
+          python3 -c "from launchpadlib.launchpad import Launchpad"
 
       - name: Checkout
         uses: actions/checkout@v5
