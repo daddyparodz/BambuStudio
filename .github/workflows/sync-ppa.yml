@@ -3,6 +3,18 @@ name: Sync Launchpad PPA
 on:
   schedule:
     - cron: '0 */6 * * *'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/sync-ppa.yml'
+      - '.github/workflows/sync-ppa-channel.yml'
+      - 'packaging/**'
+      - 'scripts/**'
+  pull_request:
+    paths:
+      - '.github/workflows/sync-ppa.yml'
+      - '.github/workflows/sync-ppa-channel.yml'
   workflow_dispatch:
     inputs:
       release_tag:
@@ -35,300 +47,23 @@ permissions:
   contents: write
   actions: write
 
+concurrency:
+  group: sync-ppa-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'production' }}
+  cancel-in-progress: false
+
 jobs:
   sync:
     name: sync (${{ matrix.channel }})
-    runs-on: ubuntu-latest
     strategy:
       max-parallel: 1
+      fail-fast: false
       matrix:
-        channel: ${{ fromJSON(github.event_name == 'schedule' && '["stable","beta"]' || format('["{0}"]', inputs.channel)) }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential curl jq devscripts debhelper dput gnupg xz-utils desktop-file-utils xdg-utils distro-info-data python3-launchpadlib
-          python3 -c "from launchpadlib.launchpad import Launchpad"
-
-      - name: Determine upstream tag
-        id: upstream
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          channel="${{ matrix.channel }}"
-          if [[ -n "${{ inputs.release_tag }}" ]]; then
-            tag="${{ inputs.release_tag }}"
-          else
-            tag="$(./scripts/get-latest-release-tag.sh "$channel")"
-          fi
-          echo "channel=$channel" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve workflow settings
-        id: settings
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            upload="${{ inputs.upload }}"
-            revision_override="${{ inputs.ppa_revision }}"
-          else
-            upload="true"
-            revision_override=""
-          fi
-          echo "upload=$upload" >> "$GITHUB_OUTPUT"
-          echo "revision_override=$revision_override" >> "$GITHUB_OUTPUT"
-
-      - name: Check whether upload is needed
-        id: state
-        run: |
-          channel="${{ steps.upstream.outputs.channel }}"
-          if [[ "$channel" == "beta" ]]; then
-            source_package_name="bambustudio-beta"
-          else
-            source_package_name="bambustudio"
-          fi
-          marker_file="state/latest-${channel}-tag.txt"
-          commit_file="state/latest-${channel}-commit.txt"
-          revision_file="state/latest-${channel}-revision.txt"
-          recorded_tag="$(tr -d '\n' < "$marker_file" || true)"
-          recorded_commit="$(tr -d '\n' < "$commit_file" || true)"
-          recorded_revision="$(tr -d '\n' < "$revision_file" || true)"
-          current_tag="${{ steps.upstream.outputs.tag }}"
-          upstream_version="${current_tag#v}"
-          current_commit="${{ github.sha }}"
-          revision_override="${{ steps.settings.outputs.revision_override }}"
-          repo_content_changed=false
-          changed_non_state_files=""
-          if [[ -n "${{ inputs.series }}" ]]; then
-            series_list="${{ inputs.series }}"
-          else
-            series_list="$(./scripts/list-ubuntu-series.sh)"
-          fi
-
-          if [[ ! "$recorded_revision" =~ ^[0-9]+$ ]]; then
-            recorded_revision=1
-          fi
-
-          archive_max_revision=0
-          # Use Launchpad API (Pending + Published) so we do not miss freshly
-          # accepted uploads that may not yet be visible in Sources.gz.
-          while IFS= read -r n; do
-            if [[ "$n" =~ ^[0-9]+$ ]] && (( n > archive_max_revision )); then
-              archive_max_revision="$n"
-            fi
-          done < <(SOURCE_PACKAGE_NAME="$source_package_name" UPSTREAM_VERSION="$upstream_version" SERIES_LIST="$series_list" python3 - <<'PY'
-          import json, os, re, urllib.parse, urllib.request
-          source_package_name = os.environ["SOURCE_PACKAGE_NAME"]
-          upstream_version = os.environ["UPSTREAM_VERSION"]
-          series_list = os.environ["SERIES_LIST"].split()
-          base = "https://api.launchpad.net/1.0/~daddyparodz/+archive/ubuntu/bambustudio"
-          statuses = ("Pending", "Published")
-          rx = re.compile(rf"^{re.escape(upstream_version)}\+[A-Za-z0-9]+-0ppa([0-9]+)~")
-          for series in series_list:
-            for st in statuses:
-              qs = urllib.parse.urlencode({
-                "ws.op": "getPublishedSources",
-                "source_name": source_package_name,
-                "exact_match": "true",
-                "distro_series": f"https://api.launchpad.net/1.0/ubuntu/{series}",
-                "status": st,
-                "order_by_date": "true",
-              })
-              url = f"{base}?{qs}"
-              try:
-                with urllib.request.urlopen(url, timeout=30) as r:
-                  data = json.load(r)
-              except Exception:
-                continue
-              for e in data.get("entries", []):
-                v = e.get("source_package_version", "")
-                m = rx.match(v)
-                if m:
-                  print(m.group(1))
-          PY
-          )
-          echo "Archive max revision for ${source_package_name} ${current_tag}: ${archive_max_revision}"
-
-          if (( archive_max_revision > recorded_revision )); then
-            base_revision="$archive_max_revision"
-          else
-            base_revision="$recorded_revision"
-          fi
-
-          if [[ -n "$recorded_commit" ]] && git rev-parse --verify -q "$recorded_commit^{commit}" >/dev/null; then
-            if git merge-base --is-ancestor "$recorded_commit" "$current_commit"; then
-              changed_non_state_files="$(
-                git diff --name-only "$recorded_commit..$current_commit" \
-                  | grep -Ev '^state/latest-[a-z0-9-]+-(tag|commit|revision)\.txt$' \
-                  || true
-              )"
-              if [[ -n "$changed_non_state_files" ]]; then
-                repo_content_changed=true
-              fi
-            else
-              # History rewrite or divergent marker commit: play safe and publish once.
-              repo_content_changed=true
-            fi
-          elif [[ -n "$recorded_commit" ]]; then
-            # Marker points to commit not reachable from current history: publish once.
-            repo_content_changed=true
-          fi
-
-          if [[ -n "$changed_non_state_files" ]]; then
-            echo "Changed non-state files since marker:"
-            printf '%s\n' "$changed_non_state_files"
-          else
-            echo "Changed non-state files since marker: (none)"
-          fi
-          echo "Repo content changed since marker (excluding state files): ${repo_content_changed}"
-
-          # Respect explicit manual override when provided.
-          if [[ -n "$revision_override" ]]; then
-            if ! [[ "$revision_override" =~ ^[0-9]+$ ]]; then
-              echo "Invalid ppa_revision override: $revision_override" >&2
-              exit 1
-            fi
-            if (( revision_override <= archive_max_revision )); then
-              echo "Invalid ppa_revision override: $revision_override <= archive max $archive_max_revision for ${current_tag}" >&2
-              exit 1
-            fi
-            revision="$revision_override"
-            skip=false
-          elif [[ "$recorded_tag" != "$current_tag" ]]; then
-            # New upstream tag resets revision to 1 unless archive already has uploads.
-            if (( archive_max_revision > 0 )); then
-              revision=$((archive_max_revision + 1))
-            else
-              revision=1
-            fi
-            skip=false
-          elif [[ "$repo_content_changed" == "true" ]]; then
-            # Same upstream tag but packaging repo content changed: bump revision.
-            revision=$((base_revision + 1))
-            skip=false
-          elif (( archive_max_revision > recorded_revision )); then
-            # Archive moved ahead (for example partial prior upload + stale marker).
-            revision="$archive_max_revision"
-            skip=true
-          else
-            # Same upstream tag and same packaging commit: nothing to publish.
-            revision="$recorded_revision"
-            skip=true
-          fi
-
-          if [[ "$skip" == "true" ]]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "revision=$revision" >> "$GITHUB_OUTPUT"
-
-      - name: Import Launchpad signing key
-        if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
-        env:
-          LAUNCHPAD_GPG_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_GPG_PRIVATE_KEY }}
-          LAUNCHPAD_GPG_FINGERPRINT: ${{ secrets.LAUNCHPAD_GPG_FINGERPRINT }}
-        run: |
-          test -n "$LAUNCHPAD_GPG_PRIVATE_KEY"
-          test -n "$LAUNCHPAD_GPG_FINGERPRINT"
-          export GNUPGHOME="$(mktemp -d)"
-          printf '%s\n' "$LAUNCHPAD_GPG_PRIVATE_KEY" | gpg --batch --import
-          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
-          echo "LAUNCHPAD_GPG_FINGERPRINT=$LAUNCHPAD_GPG_FINGERPRINT" >> "$GITHUB_ENV"
-
-      - name: Build source packages
-        if: steps.state.outputs.skip != 'true'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.upstream.outputs.tag }}
-          PPA_REVISION: ${{ steps.state.outputs.revision }}
-          SOURCE_INCLUDE_MODE: auto
-          SERIES_OVERRIDE: ${{ inputs.series }}
-          CHANNEL: ${{ steps.upstream.outputs.channel }}
-          DEBFULLNAME: daddyparodz
-          DEBEMAIL: 45983094+daddyparodz@users.noreply.github.com
-        run: |
-          if [[ -n "${SERIES_OVERRIDE:-}" ]]; then
-            series="$SERIES_OVERRIDE"
-          else
-            series="$(./scripts/list-ubuntu-series.sh)"
-          fi
-          echo "Using Ubuntu series: ${series}"
-          args=(--release-tag "$RELEASE_TAG" --series "$series")
-          if [[ "${{ steps.settings.outputs.upload }}" == "true" ]]; then
-            export DEBSIGN_KEYID="${LAUNCHPAD_GPG_FINGERPRINT}"
-            args+=(--sign)
-          fi
-          ./scripts/build-source-package.sh --channel "$CHANNEL" "${args[@]}"
-
-      - name: Validate generated source and binary payloads
-        if: steps.state.outputs.skip != 'true'
-        env:
-          PPA_REVISION: ${{ steps.state.outputs.revision }}
-          SOURCE_INCLUDE_MODE: auto
-        run: |
-          ./scripts/validate-generated-packages.sh dist
-
-      - name: Upload to Launchpad
-        if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
-        env:
-          PPA_REVISION: ${{ steps.state.outputs.revision }}
-          LAUNCHPAD_CREDENTIALS: ${{ secrets.LAUNCHPAD_CREDENTIALS }}
-          LAUNCHPAD_SSH_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_SSH_PRIVATE_KEY }}
-          LAUNCHPAD_SFTP_LOGIN: daddyparodz
-          PPA_UPLOAD_METHOD: auto
-        run: |
-          bash ./scripts/prune-ppa.sh \
-            --owner daddyparodz \
-            --archive bambustudio \
-            --package bambustudio \
-            --package bambustudio-beta
-          echo "Starting Launchpad source upload..."
-          ./scripts/upload-ppa.sh dist/*_source.changes
-          echo "Launchpad source upload completed."
-
-      - name: Update packaged release marker
-        if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true' && success() && github.ref == 'refs/heads/main'
-        continue-on-error: true
-        run: |
-          channel="${{ steps.upstream.outputs.channel }}"
-          marker_file="state/latest-${channel}-tag.txt"
-          commit_file="state/latest-${channel}-commit.txt"
-          revision_file="state/latest-${channel}-revision.txt"
-          printf '%s\n' "${{ steps.upstream.outputs.tag }}" > "$marker_file"
-          printf '%s\n' "${{ github.sha }}" > "$commit_file"
-          printf '%s\n' "${{ steps.state.outputs.revision }}" > "$revision_file"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$marker_file" "$commit_file" "$revision_file"
-          git commit -m "chore: record ${{ steps.upstream.outputs.channel }} packaged release ${{ steps.upstream.outputs.tag }}-0ppa${{ steps.state.outputs.revision }}" || exit 0
-          # Resolve transient non-fast-forward races caused by concurrent runs.
-          for attempt in 1 2 3; do
-            if git pull --rebase origin main && git push origin HEAD:main; then
-              break
-            fi
-            if [[ "$attempt" -eq 3 ]]; then
-              echo "Marker push failed after retries." >&2
-              exit 1
-            fi
-            sleep 5
-          done
-
-      - name: Cleanup old workflow artifacts
-        if: always()
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "Removing stale Actions artifacts to avoid storage accumulation..."
-          gh api repos/${{ github.repository }}/actions/artifacts --paginate \
-            --jq '.artifacts[] | select(.name=="launchpad-source-package" or .name=="source-package") | .id' \
-          | while read -r artifact_id; do
-              [[ -n "$artifact_id" ]] || continue
-              gh api --method DELETE repos/${{ github.repository }}/actions/artifacts/"$artifact_id"
-              echo "Deleted artifact id=$artifact_id"
-            done
+        channel: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.channel) || github.event_name == 'pull_request' && '["stable"]' || '["stable","beta"]') }}
+    uses: ./.github/workflows/sync-ppa-channel.yml
+    with:
+      channel: ${{ matrix.channel }}
+      release_tag: ${{ inputs.release_tag || '' }}
+      ppa_revision: ${{ inputs.ppa_revision || '' }}
+      upload: ${{ (github.event_name == 'workflow_dispatch' && inputs.upload) || (github.event_name != 'workflow_dispatch' && github.event_name != 'pull_request') }}
+      series: ${{ inputs.series || '' }}
+    secrets: inherit

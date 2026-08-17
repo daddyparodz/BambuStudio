@@ -15,17 +15,69 @@ on:
       - 'packaging/**'
       - 'scripts/**'
 
+permissions:
+  contents: read
+
 jobs:
-  validate:
+  validate-github-hosted:
+    name: validate (github-hosted)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    steps:
+    defaults:
+      run:
+        shell: bash
+    steps: &validation_steps
+      - name: Install and verify dependencies
+        run: |
+          set -euxo pipefail
+          SUDO=()
+          if (( EUID != 0 )); then
+            SUDO=(sudo)
+          fi
+          "${SUDO[@]}" apt-get update
+          "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            bash \
+            build-essential \
+            ca-certificates \
+            curl \
+            debhelper \
+            desktop-file-utils \
+            devscripts \
+            distro-info \
+            distro-info-data \
+            dput \
+            gh \
+            git \
+            gnupg \
+            jq \
+            lintian \
+            openssh-client \
+            python3 \
+            python3-launchpadlib \
+            xdg-utils \
+            xz-utils
+          "${SUDO[@]}" rm -rf /var/lib/apt/lists/*
+
+          command -v bash
+          command -v curl
+          command -v debuild
+          command -v dpkg-buildpackage
+          command -v dpkg-deb
+          command -v dpkg-source
+          command -v dput
+          command -v gh
+          command -v git
+          command -v gpg
+          command -v jq
+          command -v lintian
+          command -v python3
+          command -v ssh
+          command -v ssh-keyscan
+          command -v ubuntu-distro-info
+          python3 -c "from launchpadlib.launchpad import Launchpad"
+
       - name: Checkout
         uses: actions/checkout@v5
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential curl jq devscripts debhelper dput xz-utils desktop-file-utils xdg-utils lintian distro-info-data
 
       - name: Check shell syntax
         run: |
@@ -42,3 +94,22 @@ jobs:
       - name: Validate generated source and binary payloads
         run: |
           ./scripts/validate-generated-packages.sh dist
+
+  validate-self-hosted:
+    name: validate (self-hosted fallback)
+    needs: validate-github-hosted
+    if: >-
+      ${{
+        always() &&
+        (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+        needs.validate-github-hosted.result != 'success'
+      }}
+    runs-on: [self-hosted, linux, x64]
+    container:
+      image: ubuntu:24.04
+      env:
+        DEBIAN_FRONTEND: noninteractive
+    defaults:
+      run:
+        shell: bash
+    steps: *validation_steps
