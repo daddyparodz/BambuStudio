@@ -33,22 +33,23 @@ permissions:
   actions: write
 
 jobs:
-  sync-github-hosted:
-    name: ${{ inputs.channel }} (github-hosted)
-    runs-on: ubuntu-latest
+  sync:
+    name: ${{ inputs.channel }} (self-hosted container)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
+    container:
+      image: ubuntu:24.04
+      env:
+        DEBIAN_FRONTEND: noninteractive
     defaults:
       run:
         shell: bash
-    steps: &sync_steps
-      - name: Install and verify dependencies
+    steps:
+      - name: Bootstrap container
         run: |
           set -euxo pipefail
-          SUDO=()
-          if (( EUID != 0 )); then
-            SUDO=(sudo)
-          fi
-          "${SUDO[@]}" apt-get update
-          "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             bash \
             build-essential \
             ca-certificates \
@@ -68,7 +69,7 @@ jobs:
             python3-launchpadlib \
             xdg-utils \
             xz-utils
-          "${SUDO[@]}" rm -rf /var/lib/apt/lists/*
+          rm -rf /var/lib/apt/lists/*
 
           command -v bash
           command -v curl
@@ -148,8 +149,8 @@ jobs:
           fi
 
           archive_max_revision=0
-          # Query Pending and Published sources so a retry sees uploads that
-          # Launchpad accepted moments earlier even before they reach Sources.gz.
+          # Query Pending and Published sources so retries see uploads that
+          # Launchpad accepted before they reach archive indexes.
           while IFS= read -r n; do
             if [[ "$n" =~ ^[0-9]+$ ]] && (( n > archive_max_revision )); then
               archive_max_revision="$n"
@@ -161,7 +162,9 @@ jobs:
           series_list = os.environ["SERIES_LIST"].split()
           base = "https://api.launchpad.net/1.0/~daddyparodz/+archive/ubuntu/bambustudio"
           statuses = ("Pending", "Published")
-          rx = re.compile(rf"^{re.escape(upstream_version)}\+[A-Za-z0-9]+-0ppa([0-9]+)~")
+          rx = re.compile(
+              rf"^{re.escape(upstream_version)}\+[A-Za-z0-9]+(?:\+[A-Za-z0-9.]+)*-0ppa([0-9]+)~"
+          )
           for series in series_list:
             for st in statuses:
               qs = urllib.parse.urlencode({
@@ -179,10 +182,10 @@ jobs:
               except Exception:
                 continue
               for e in data.get("entries", []):
-                v = e.get("source_package_version", "")
-                m = rx.match(v)
-                if m:
-                  print(m.group(1))
+                version = e.get("source_package_version", "")
+                match = rx.match(version)
+                if match:
+                  print(match.group(1))
           PY
           )
           echo "Archive max revision for ${source_package_name} ${current_tag}: ${archive_max_revision}"
@@ -354,17 +357,3 @@ jobs:
               gh api --method DELETE repos/${{ github.repository }}/actions/artifacts/"$artifact_id"
               echo "Deleted artifact id=$artifact_id"
             done
-
-  sync-self-hosted:
-    name: ${{ inputs.channel }} (self-hosted fallback)
-    needs: sync-github-hosted
-    if: ${{ always() && needs.sync-github-hosted.result != 'success' }}
-    runs-on: [self-hosted, linux, x64]
-    container:
-      image: ubuntu:24.04
-      env:
-        DEBIAN_FRONTEND: noninteractive
-    defaults:
-      run:
-        shell: bash
-    steps: *sync_steps
