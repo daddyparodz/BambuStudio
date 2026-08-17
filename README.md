@@ -4,11 +4,13 @@ Launchpad packaging for Bambu Studio on Ubuntu.
 
 This repository maintains the source package, automation, and release flow behind `ppa:daddyparodz/bambustudio`.
 
-Supported Ubuntu series:
+Current publishable Ubuntu series:
 
 - `jammy` (22.04 LTS)
 - `noble` (24.04 LTS)
-- `questing` (25.10)
+- `resolute` (26.04 LTS)
+
+The release workflow derives its target series from `ubuntu-distro-info --supported` and excludes the active development series. This lets supported releases move forward automatically as Ubuntu support status changes.
 
 ## Install Stable
 
@@ -75,7 +77,7 @@ gtk-launch bambustudio-beta
 
 ## CI Runner Fallback
 
-GitHub Actions prefers the standard GitHub-hosted `ubuntu-latest` runner. If that job does not complete successfully, the workflow retries the same validation or release channel on a Linux x64 self-hosted runner inside a clean `ubuntu:24.04` job container.
+GitHub Actions prefers the standard GitHub-hosted `ubuntu-latest` runner. If that attempt finishes without success, the workflow retries the same validation or release channel on a Linux x64 self-hosted runner inside a clean `ubuntu:24.04` job container.
 
 Both runner paths install and verify the build, packaging, signing, Launchpad, SSH, and GitHub CLI dependencies needed by the workflow. The self-hosted host therefore only needs the runner application and Docker, not the Debian packaging toolchain itself.
 
