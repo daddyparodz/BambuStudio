@@ -1,0 +1,31 @@
+name: Check PPA Orig Tarballs
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/check-ppa-origs.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check current orig tarballs
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://ppa.launchpadcontent.net/daddyparodz/bambustudio/ubuntu/pool/main'
+          for package in bambustudio bambustudio-beta; do
+            if [[ "$package" == bambustudio ]]; then
+              version='02.08.02.60'
+            else
+              version='02.08.01.55'
+            fi
+            for series in jammy noble resolute; do
+              url="$base/${package:0:1}/$package/${package}_${version}+${series}.orig.tar.xz"
+              code="$(curl -sS -L --retry 3 --retry-all-errors -o /dev/null -w '%{http_code}' "$url" || true)"
+              echo "$package $series orig_http=$code"
+            done
+          done
