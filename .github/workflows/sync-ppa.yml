@@ -61,7 +61,7 @@ jobs:
       max-parallel: 1
       fail-fast: false
       matrix:
-        channel: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.channel) || github.event_name == 'pull_request' && '["stable"]' || '["stable","beta"]') }}
+        channel: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.channel) || '["stable","beta"]') }}
     uses: ./.github/workflows/sync-ppa-channel.yml
     with:
       channel: ${{ matrix.channel }}
