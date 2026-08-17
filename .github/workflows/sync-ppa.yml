@@ -11,6 +11,10 @@ on:
       - '.github/workflows/sync-ppa-channel.yml'
       - 'packaging/**'
       - 'scripts/**'
+  pull_request:
+    paths:
+      - '.github/workflows/sync-ppa.yml'
+      - '.github/workflows/sync-ppa-channel.yml'
   workflow_dispatch:
     inputs:
       release_tag:
@@ -44,7 +48,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: sync-ppa
+  group: sync-ppa-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'production' }}
   cancel-in-progress: false
 
 jobs:
@@ -54,12 +58,12 @@ jobs:
       max-parallel: 1
       fail-fast: false
       matrix:
-        channel: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.channel) || '["stable","beta"]') }}
+        channel: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.channel) || github.event_name == 'pull_request' && '["stable"]' || '["stable","beta"]') }}
     uses: ./.github/workflows/sync-ppa-channel.yml
     with:
       channel: ${{ matrix.channel }}
       release_tag: ${{ inputs.release_tag || '' }}
       ppa_revision: ${{ inputs.ppa_revision || '' }}
-      upload: ${{ github.event_name != 'workflow_dispatch' || inputs.upload }}
+      upload: ${{ (github.event_name == 'workflow_dispatch' && inputs.upload) || (github.event_name != 'workflow_dispatch' && github.event_name != 'pull_request') }}
       series: ${{ inputs.series || '' }}
     secrets: inherit
