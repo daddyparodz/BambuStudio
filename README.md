@@ -75,13 +75,13 @@ gtk-launch bambustudio
 gtk-launch bambustudio-beta
 ```
 
-## CI Runner Fallback
+## Self-Hosted CI Runner
 
-GitHub Actions prefers the standard GitHub-hosted `ubuntu-latest` runner. If that attempt finishes without success, the workflow retries the same validation or release channel on a Linux x64 self-hosted runner inside a clean `ubuntu:24.04` job container.
+All GitHub Actions validation and PPA release jobs run only on a Linux x64 self-hosted runner with the default labels `self-hosted`, `linux`, and `x64`. Each job executes inside a clean `ubuntu:24.04` GitHub Actions job container.
 
-Both runner paths install and verify the build, packaging, signing, Launchpad, SSH, and GitHub CLI dependencies needed by the workflow. The self-hosted host therefore only needs the runner application and Docker, not the Debian packaging toolchain itself.
+The workflows install and verify their build, packaging, signing, Launchpad, SSH, and GitHub CLI dependencies inside the job container. The runner host therefore only needs the GitHub Actions runner and Docker, not the Debian packaging toolchain itself.
 
-Self-hosted fallback requirements:
+Runner requirements:
 
 - GitHub Actions runner `v2.327.1` or newer for `actions/checkout@v5`
 - default runner labels `self-hosted`, `linux`, and `x64`
@@ -89,9 +89,11 @@ Self-hosted fallback requirements:
 - outbound network access required for GitHub, Ubuntu package mirrors, upstream Bambu Studio release assets, Docker Hub, and Launchpad
 - if the runner application itself is containerized, it must have access to a Docker daemon capable of starting GitHub Actions job containers
 
-The validation workflow does not execute fork-originated pull requests on self-hosted infrastructure. Same-repository pull requests can fall back to the self-hosted container when the GitHub-hosted validation attempt fails.
+Fork-originated pull requests are not executed on self-hosted infrastructure. Same-repository pull requests run the full packaging validation and a non-uploading stable PPA dry run on the self-hosted container runner.
 
-PPA sync fallback is isolated per channel. If the GitHub-hosted stable job succeeds but beta fails, only beta is retried on self-hosted infrastructure. This avoids an unnecessary duplicate release of the successful channel.
+## PPA Retention
+
+The pruning policy keeps the newest published source for each package and each Ubuntu series independently. It does not delete the newest Jammy or Noble source just because a newer Resolute publication exists. This preserves the per-series orig tarballs required by later Debian revision uploads.
 
 ## Release Cadence
 
@@ -112,4 +114,3 @@ Upstream project and release source:
 
 - <https://github.com/bambulab/BambuStudio>
 - <https://github.com/bambulab/BambuStudio/releases>
-
