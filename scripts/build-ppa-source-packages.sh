@@ -53,7 +53,7 @@ for series in $SERIES; do
   # the old publication was deleted. A brand-new series is the only safe case
   # for creating a fresh orig with the existing upstream naming scheme.
   set +e
-  "$SCRIPT_DIR/fetch-ppa-origs.sh" \
+  bash "$SCRIPT_DIR/fetch-ppa-origs.sh" \
     --package "$SOURCE_PACKAGE_NAME" \
     --upstream-version "$UPSTREAM_VERSION" \
     --series "$series" \
@@ -100,7 +100,7 @@ for series in $SERIES; do
   fi
 
   echo "Building ${SOURCE_PACKAGE_NAME} for ${series}: revision=${PPA_REVISION}, source_mode=${include_mode}"
-  "$SCRIPT_DIR/build-source-package.sh" "${args[@]}"
+  bash "$SCRIPT_DIR/build-source-package.sh" "${args[@]}"
 done
 
 echo "Built PPA source packages for ${CHANNEL} ${RELEASE_TAG} into ${OUTPUT_DIR}"
