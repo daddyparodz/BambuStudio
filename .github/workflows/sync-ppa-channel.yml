@@ -36,7 +36,7 @@ jobs:
   sync:
     name: ${{ inputs.channel }} (self-hosted container)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: self-hosted
+    runs-on: [self-hosted, linux, x64]
     container:
       image: ubuntu:24.04
       env:
@@ -126,6 +126,7 @@ jobs:
           else
             source_package_name="bambustudio"
           fi
+
           marker_file="state/latest-${channel}-tag.txt"
           commit_file="state/latest-${channel}-commit.txt"
           revision_file="state/latest-${channel}-revision.txt"
@@ -138,6 +139,7 @@ jobs:
           revision_override="${{ steps.settings.outputs.revision_override }}"
           repo_content_changed=false
           changed_non_state_files=""
+
           if [[ -n "$SERIES_OVERRIDE" ]]; then
             series_list="$SERIES_OVERRIDE"
           else
@@ -148,44 +150,19 @@ jobs:
             recorded_revision=1
           fi
 
-          archive_max_revision=0
-          while IFS= read -r n; do
-            if [[ "$n" =~ ^[0-9]+$ ]] && (( n > archive_max_revision )); then
-              archive_max_revision="$n"
-            fi
-          done < <(SOURCE_PACKAGE_NAME="$source_package_name" UPSTREAM_VERSION="$upstream_version" SERIES_LIST="$series_list" python3 - <<'PY'
-          import json, os, re, urllib.parse, urllib.request
-          source_package_name = os.environ["SOURCE_PACKAGE_NAME"]
-          upstream_version = os.environ["UPSTREAM_VERSION"]
-          series_list = os.environ["SERIES_LIST"].split()
-          base = "https://api.launchpad.net/1.0/~daddyparodz/+archive/ubuntu/bambustudio"
-          statuses = ("Pending", "Published")
-          rx = re.compile(
-              rf"^{re.escape(upstream_version)}\+[A-Za-z0-9]+(?:\+[A-Za-z0-9.]+)*-0ppa([0-9]+)~"
-          )
-          for series in series_list:
-            for st in statuses:
-              qs = urllib.parse.urlencode({
-                "ws.op": "getPublishedSources",
-                "source_name": source_package_name,
-                "exact_match": "true",
-                "distro_series": f"https://api.launchpad.net/1.0/ubuntu/{series}",
-                "status": st,
-                "order_by_date": "true",
-              })
-              url = f"{base}?{qs}"
-              try:
-                with urllib.request.urlopen(url, timeout=30) as r:
-                  data = json.load(r)
-              except Exception:
-                continue
-              for e in data.get("entries", []):
-                version = e.get("source_package_version", "")
-                match = rx.match(version)
-                if match:
-                  print(match.group(1))
-          PY
-          )
+          if ! archive_max_revision="$(
+            bash ./scripts/get-ppa-max-revision.sh \
+              --package "$source_package_name" \
+              --upstream-version "$upstream_version" \
+              --series "$series_list"
+          )"; then
+            echo "Could not determine the maximum historical PPA revision safely." >&2
+            exit 1
+          fi
+          if ! [[ "$archive_max_revision" =~ ^[0-9]+$ ]]; then
+            echo "Invalid maximum PPA revision returned: $archive_max_revision" >&2
+            exit 1
+          fi
           echo "Archive max revision for ${source_package_name} ${current_tag}: ${archive_max_revision}"
 
           if (( archive_max_revision > recorded_revision )); then
