@@ -91,9 +91,13 @@ Runner requirements:
 
 Fork-originated pull requests are not executed on self-hosted infrastructure. Same-repository pull requests run the full packaging validation plus non-uploading stable and beta PPA dry runs on the self-hosted container runner.
 
-## PPA Retention
+## PPA Retention and Release Safety
 
 The pruning policy keeps the newest published source for each package and each Ubuntu series independently. It does not delete the newest Jammy or Noble source just because a newer Resolute publication exists. This preserves the per-series orig tarballs required by later Debian revision uploads.
+
+Revision releases reuse the exact historical orig tarball. If an earlier retention run removed that file from the public PPA pool, the release helper searches all Launchpad source-publication states, follows paginated history, and recovers the retained Librarian copy. If Launchpad history cannot be queried completely or an existing orig cannot be recovered exactly, the release fails instead of regenerating a potentially different file under the same upstream filename.
+
+The workflow also resolves the highest historical PPA revision through a retrying, paginated, fail-closed Launchpad query. After upload it waits for Launchpad to accept every exact source version and for the corresponding builds to succeed. Only then does it write the release marker back to `main`, and failure to record that marker after retries fails the release.
 
 ## Release Cadence
 
