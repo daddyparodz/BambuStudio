@@ -19,23 +19,23 @@ permissions:
   contents: read
 
 jobs:
-  validate-github-hosted:
-    name: validate (github-hosted)
+  validate:
+    name: validate (self-hosted container)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
+    container:
+      image: ubuntu:24.04
+      env:
+        DEBIAN_FRONTEND: noninteractive
     defaults:
       run:
         shell: bash
-    steps: &validation_steps
-      - name: Install and verify dependencies
+    steps:
+      - name: Bootstrap container
         run: |
           set -euxo pipefail
-          SUDO=()
-          if (( EUID != 0 )); then
-            SUDO=(sudo)
-          fi
-          "${SUDO[@]}" apt-get update
-          "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             bash \
             build-essential \
             ca-certificates \
@@ -56,7 +56,7 @@ jobs:
             python3-launchpadlib \
             xdg-utils \
             xz-utils
-          "${SUDO[@]}" rm -rf /var/lib/apt/lists/*
+          rm -rf /var/lib/apt/lists/*
 
           command -v bash
           command -v curl
@@ -85,7 +85,10 @@ jobs:
 
       - name: Build source package
         run: |
-          ./scripts/build-source-package.sh --series "questing"
+          series="$(./scripts/list-ubuntu-series.sh | awk '{print $NF}')"
+          test -n "$series"
+          echo "Validating against Ubuntu series: $series"
+          ./scripts/build-source-package.sh --series "$series"
 
       - name: Lint generated source package
         run: |
@@ -94,22 +97,3 @@ jobs:
       - name: Validate generated source and binary payloads
         run: |
           ./scripts/validate-generated-packages.sh dist
-
-  validate-self-hosted:
-    name: validate (self-hosted fallback)
-    needs: validate-github-hosted
-    if: >-
-      ${{
-        always() &&
-        (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
-        needs.validate-github-hosted.result != 'success'
-      }}
-    runs-on: [self-hosted, linux, x64]
-    container:
-      image: ubuntu:24.04
-      env:
-        DEBIAN_FRONTEND: noninteractive
-    defaults:
-      run:
-        shell: bash
-    steps: *validation_steps
