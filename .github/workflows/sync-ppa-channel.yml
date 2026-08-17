@@ -149,8 +149,6 @@ jobs:
           fi
 
           archive_max_revision=0
-          # Query Pending and Published sources so retries see uploads that
-          # Launchpad accepted before they reach archive indexes.
           while IFS= read -r n; do
             if [[ "$n" =~ ^[0-9]+$ ]] && (( n > archive_max_revision )); then
               archive_max_revision="$n"
@@ -272,24 +270,18 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.upstream.outputs.tag }}
           PPA_REVISION: ${{ steps.state.outputs.revision }}
-          SOURCE_INCLUDE_MODE: auto
           SERIES_OVERRIDE: ${{ inputs.series }}
           CHANNEL: ${{ steps.upstream.outputs.channel }}
           DEBFULLNAME: daddyparodz
           DEBEMAIL: 45983094+daddyparodz@users.noreply.github.com
         run: |
-          if [[ -n "${SERIES_OVERRIDE:-}" ]]; then
-            series="$SERIES_OVERRIDE"
-          else
-            series="$(./scripts/list-ubuntu-series.sh)"
-          fi
-          echo "Using Ubuntu series: ${series}"
-          args=(--release-tag "$RELEASE_TAG" --series "$series")
           if [[ "${{ steps.settings.outputs.upload }}" == "true" ]]; then
             export DEBSIGN_KEYID="${LAUNCHPAD_GPG_FINGERPRINT}"
-            args+=(--sign)
+            export SIGN_SOURCE=1
+          else
+            export SIGN_SOURCE=0
           fi
-          ./scripts/build-source-package.sh --channel "$CHANNEL" "${args[@]}"
+          bash ./scripts/build-ppa-source-packages.sh
 
       - name: Validate generated source and binary payloads
         if: steps.state.outputs.skip != 'true'
@@ -302,7 +294,6 @@ jobs:
       - name: Upload to Launchpad
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
         env:
-          PPA_REVISION: ${{ steps.state.outputs.revision }}
           LAUNCHPAD_CREDENTIALS: ${{ secrets.LAUNCHPAD_CREDENTIALS }}
           LAUNCHPAD_SSH_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_SSH_PRIVATE_KEY }}
           LAUNCHPAD_SFTP_LOGIN: daddyparodz
@@ -316,6 +307,20 @@ jobs:
           echo "Starting Launchpad source upload..."
           ./scripts/upload-ppa.sh dist/*_source.changes
           echo "Launchpad source upload completed."
+
+      - name: Verify Launchpad publication and builds
+        if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
+        env:
+          CHANNEL: ${{ steps.upstream.outputs.channel }}
+        run: |
+          if [[ "$CHANNEL" == "beta" ]]; then
+            source_package_name="bambustudio-beta"
+          else
+            source_package_name="bambustudio"
+          fi
+          bash ./scripts/verify-ppa-release.sh \
+            --package "$source_package_name" \
+            --dist-dir dist
 
       - name: Update packaged release marker
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true' && success() && github.ref == 'refs/heads/main'
