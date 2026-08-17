@@ -15,7 +15,7 @@ jobs:
       - name: Verify source acceptance and binary builds
         shell: bash
         run: |
-          python3 - <<'PY'
+          python3 -u - <<'PY'
           import json
           import time
           import urllib.parse
@@ -36,7 +36,10 @@ jobs:
           }
 
           def get_json(url):
-              req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "bambustudio-ci-verify"})
+              req = urllib.request.Request(
+                  url,
+                  headers={"Accept": "application/json", "User-Agent": "bambustudio-ci-verify"},
+              )
               with urllib.request.urlopen(req, timeout=30) as response:
                   return json.load(response)
 
@@ -62,25 +65,56 @@ jobs:
               qs = urllib.parse.urlencode({
                   "ws.op": "getBuildRecords",
                   "source_name": package,
+                  "ws.size": 300,
               })
               return get_json(f"{BASE}?{qs}").get("entries", [])
 
-          accepted = {}
-          for package, series_map in EXPECTED.items():
-              accepted[package] = {}
-              for series, version in series_map.items():
-                  matches = [r for r in source_records(package, series) if r.get("source_package_version") == version]
-                  if not matches:
-                      raise SystemExit(f"Launchpad has not accepted expected source: {package} {series} {version}")
-                  accepted[package][version] = series
-                  statuses = sorted({r.get("status") or r.get("queried_status") for r in matches})
-                  print(f"SOURCE OK: {package} {series} {version} statuses={statuses}")
+          expected_sources = {
+              (package, series, version)
+              for package, series_map in EXPECTED.items()
+              for series, version in series_map.items()
+          }
+          pending_sources = set(expected_sources)
+          source_deadline = time.monotonic() + 900
 
-          pending = set((package, version, series) for package, versions in accepted.items() for version, series in versions.items())
-          deadline = time.monotonic() + 600
+          while pending_sources:
+              for package, series, version in sorted(tuple(pending_sources)):
+                  matches = [
+                      record
+                      for record in source_records(package, series)
+                      if record.get("source_package_version") == version
+                  ]
+                  if matches:
+                      statuses = sorted({
+                          record.get("status") or record.get("queried_status")
+                          for record in matches
+                      })
+                      print(f"SOURCE OK: {package} {series} {version} statuses={statuses}", flush=True)
+                      pending_sources.discard((package, series, version))
+
+              if not pending_sources:
+                  break
+              if time.monotonic() >= source_deadline:
+                  print("Launchpad did not expose all expected sources before verification timeout:")
+                  for item in sorted(pending_sources):
+                      print(f"  {item}")
+                  raise SystemExit(1)
+              print(f"Waiting for Launchpad source ingestion: {len(pending_sources)} source(s) not visible yet", flush=True)
+              time.sleep(20)
+
+          accepted = {
+              package: {version: series for series, version in series_map.items()}
+              for package, series_map in EXPECTED.items()
+          }
+          pending_builds = {
+              (package, version, series)
+              for package, versions in accepted.items()
+              for version, series in versions.items()
+          }
+          build_deadline = time.monotonic() + 1800
           last_states = {}
 
-          while pending:
+          while pending_builds:
               for package in EXPECTED:
                   for build in build_records(package):
                       version = build.get("source_package_version")
@@ -91,21 +125,26 @@ jobs:
                       state = build.get("buildstate") or build.get("build_state") or "<unknown>"
                       arch = build.get("arch_tag") or build.get("architecture_tag") or "<unknown>"
                       distro_arch = build.get("distro_arch_series_link") or ""
+                      if last_states.get(key) != (state, arch, distro_arch):
+                          print(
+                              f"BUILD: {package} {series} {version} state={state} arch={arch} target={distro_arch}",
+                              flush=True,
+                          )
                       last_states[key] = (state, arch, distro_arch)
-                      print(f"BUILD: {package} {series} {version} state={state} arch={arch} target={distro_arch}")
                       if state == "Successfully built":
-                          pending.discard(key)
+                          pending_builds.discard(key)
                       elif state in {"Failed to build", "Chroot problem", "Failed to upload", "Cancelled"}:
                           raise SystemExit(f"Launchpad build failed: {package} {series} {version}: {state}")
 
-              if not pending:
+              if not pending_builds:
                   break
-              if time.monotonic() >= deadline:
+              if time.monotonic() >= build_deadline:
                   print("Builds not all complete before verification timeout:")
-                  for key in sorted(pending):
+                  for key in sorted(pending_builds):
                       print(f"  {key}: {last_states.get(key, ('not visible', '', ''))}")
                   raise SystemExit(1)
-              time.sleep(20)
+              print(f"Waiting for Launchpad builders: {len(pending_builds)} build(s) incomplete", flush=True)
+              time.sleep(30)
 
           print("All stable and beta ppa2 sources were accepted and all expected Launchpad builds succeeded.")
           PY
