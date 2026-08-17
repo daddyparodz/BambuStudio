@@ -35,25 +35,70 @@ permissions:
   contents: write
   actions: write
 
+concurrency:
+  group: sync-ppa
+  cancel-in-progress: false
+
 jobs:
   sync:
     name: sync (${{ matrix.channel }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
+    container:
+      image: ubuntu:24.04
+      env:
+        DEBIAN_FRONTEND: noninteractive
+    defaults:
+      run:
+        shell: bash
     strategy:
       max-parallel: 1
       matrix:
         channel: ${{ fromJSON(github.event_name == 'schedule' && '["stable","beta"]' || format('["{0}"]', inputs.channel)) }}
     steps:
+      - name: Bootstrap container
+        run: |
+          set -euxo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            bash \
+            build-essential \
+            ca-certificates \
+            curl \
+            debhelper \
+            desktop-file-utils \
+            devscripts \
+            distro-info \
+            distro-info-data \
+            dput \
+            gh \
+            git \
+            gnupg \
+            jq \
+            openssh-client \
+            python3 \
+            python3-launchpadlib \
+            xdg-utils \
+            xz-utils
+          rm -rf /var/lib/apt/lists/*
+
+          command -v bash
+          command -v curl
+          command -v debuild
+          command -v dput
+          command -v gh
+          command -v git
+          command -v gpg
+          command -v jq
+          command -v python3
+          command -v ssh
+          command -v ssh-keyscan
+          command -v ubuntu-distro-info
+          python3 -c "from launchpadlib.launchpad import Launchpad"
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential curl jq devscripts debhelper dput gnupg xz-utils desktop-file-utils xdg-utils distro-info-data python3-launchpadlib
-          python3 -c "from launchpadlib.launchpad import Launchpad"
 
       - name: Determine upstream tag
         id: upstream
