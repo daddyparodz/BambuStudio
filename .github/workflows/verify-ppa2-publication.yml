@@ -26,12 +26,12 @@ jobs:
               "bambustudio": {
                   "jammy": "02.08.02.60+jammy-0ppa2~22.04.1",
                   "noble": "02.08.02.60+noble-0ppa2~24.04.1",
-                  "questing": "02.08.02.60+questing-0ppa2~25.10.1",
+                  "resolute": "02.08.02.60+resolute-0ppa2~26.04.1",
               },
               "bambustudio-beta": {
                   "jammy": "02.08.01.55+jammy-0ppa2~22.04.1",
                   "noble": "02.08.01.55+noble-0ppa2~24.04.1",
-                  "questing": "02.08.01.55+questing-0ppa2~25.10.1",
+                  "resolute": "02.08.01.55+resolute-0ppa2~26.04.1",
               },
           }
 
