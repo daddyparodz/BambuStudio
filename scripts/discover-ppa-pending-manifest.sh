@@ -10,6 +10,7 @@ SERIES=""
 OWNER="${PPA_OWNER:-daddyparodz}"
 ARCHIVE="${PPA_ARCHIVE:-bambustudio}"
 CREATED_AT="${PPA_PENDING_CREATED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+PARTIAL_MIN_AGE_SECONDS="${PPA_PARTIAL_MIN_AGE_SECONDS:-900}"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -23,14 +24,17 @@ release bookkeeping was not recorded. Only Pending or Published sources are
 eligible for recovery; inactive history must be superseded by a new revision.
 
 Exit status 3 means the requested revision is safe to supersede because
-Launchpad was queried successfully and either no active source exists, or the
-revision is reliably partial across the expected series with exactly one active
-source in each present series and no active source in at least one other series.
+Launchpad was queried successfully and either no active source exists, or a
+partial revision is old enough to rule out normal multi-series upload
+propagation. A partial revision is supersedable only when each present series
+has exactly one active source, at least one expected series is missing, every
+present publication exposes a creation timestamp, and the newest present
+publication is at least PPA_PARTIAL_MIN_AGE_SECONDS old (default: 900 seconds).
 It also covers release-state already recording that exact tag/revision as a
 terminal failure, or the requested tag differing from the verified channel tag
 when source commit provenance therefore cannot be established safely. API
-errors and ambiguous multiple active matches use other nonzero statuses so
-callers continue to fail closed.
+errors, ambiguous multiple active matches, and young partial revisions use
+other nonzero statuses so callers continue to fail closed.
 
 Because an older Launchpad artifact does not carry reliable Git commit
 provenance, recovery is limited to the currently verified channel tag and never
@@ -60,6 +64,7 @@ done
 [[ "$COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "Invalid current commit: $COMMIT" >&2; exit 2; }
 [[ "$REVISION" =~ ^[0-9]+$ ]] || { echo "Invalid revision: $REVISION" >&2; exit 2; }
 [[ -n "$SERIES" ]] || usage
+[[ "$PARTIAL_MIN_AGE_SECONDS" =~ ^[0-9]+$ ]] || { echo "Invalid PPA_PARTIAL_MIN_AGE_SECONDS: $PARTIAL_MIN_AGE_SECONDS" >&2; exit 2; }
 
 repo_root="$(git rev-parse --show-toplevel)"
 release_state_ref="refs/remotes/origin/release-state"
@@ -137,12 +142,14 @@ export PPA_DISCOVER_SERIES="$SERIES"
 export PPA_DISCOVER_OWNER="$OWNER"
 export PPA_DISCOVER_ARCHIVE="$ARCHIVE"
 export PPA_DISCOVER_CREATED_AT="$CREATED_AT"
+export PPA_DISCOVER_PARTIAL_MIN_AGE_SECONDS="$PARTIAL_MIN_AGE_SECONDS"
 
 python3 - <<'PY'
 import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 
 from launchpadlib.launchpad import Launchpad
 
@@ -156,6 +163,7 @@ revision = int(os.environ["PPA_DISCOVER_REVISION"])
 series_list = os.environ["PPA_DISCOVER_SERIES"].split()
 owner = os.environ["PPA_DISCOVER_OWNER"]
 archive_name = os.environ["PPA_DISCOVER_ARCHIVE"]
+partial_min_age_seconds = int(os.environ["PPA_DISCOVER_PARTIAL_MIN_AGE_SECONDS"])
 upstream = tag[1:] if tag.startswith("v") else tag
 rx = re.compile(rf"^{re.escape(upstream)}\+.+-0ppa{revision}~")
 
@@ -182,10 +190,13 @@ for series in series_list:
         for pub in pubs:
             version = str(pub.source_package_version)
             if rx.match(version):
-                matches[version] = status
+                matches[version] = {
+                    "status": status,
+                    "date_created": getattr(pub, "date_created", None),
+                }
     matches_by_series[series] = matches
 
-ambiguous = {series: matches for series, matches in matches_by_series.items() if len(matches) > 1}
+ambiguous = {series: sorted(matches) for series, matches in matches_by_series.items() if len(matches) > 1}
 if ambiguous:
     raise SystemExit(
         f"Cannot safely recover {package} revision ppa{revision}: ambiguous active "
@@ -204,10 +215,33 @@ if not present_series:
     raise SystemExit(3)
 
 if missing_series:
+    created_dates = []
+    for series in present_series:
+        entry = next(iter(matches_by_series[series].values()))
+        created = entry["date_created"]
+        if created is None:
+            raise SystemExit(
+                f"Cannot safely supersede partial {package} ppa{revision}: active source "
+                f"for {series} has no date_created timestamp."
+            )
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        created_dates.append(created.astimezone(timezone.utc))
+
+    newest_created = max(created_dates)
+    age_seconds = (datetime.now(timezone.utc) - newest_created).total_seconds()
+    if age_seconds < partial_min_age_seconds:
+        raise SystemExit(
+            f"Cannot safely supersede partial {package} ppa{revision}: present in "
+            f"{present_series}, missing in {missing_series}, but newest active source is "
+            f"only {int(age_seconds)}s old; require at least {partial_min_age_seconds}s "
+            "to rule out normal multi-series upload propagation."
+        )
+
     print(
-        f"Launchpad revision ppa{revision} is reliably partial for {package}: "
-        f"present in {present_series}, missing in {missing_series}. A higher revision "
-        "may safely supersede this incomplete upload.",
+        f"Launchpad revision ppa{revision} is an old partial upload for {package}: "
+        f"present in {present_series}, missing in {missing_series}, newest active source "
+        f"is {int(age_seconds)}s old. A higher revision may safely supersede it.",
         file=sys.stderr,
     )
     raise SystemExit(3)
