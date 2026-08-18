@@ -274,6 +274,7 @@ jobs:
 
           if (( recovery_candidate > 0 )); then
             recovery_error="$(mktemp)"
+            recovery_status=0
             if bash ./scripts/discover-ppa-pending-manifest.sh \
               --package "$source_package_name" \
               --channel "$channel" \
@@ -288,10 +289,20 @@ jobs:
               echo "revision=$recovery_candidate" >> "$GITHUB_OUTPUT"
               echo "recover=true" >> "$GITHUB_OUTPUT"
               exit 0
+            else
+              recovery_status=$?
             fi
-            echo "Historical ppa${recovery_candidate} is not fully active and cannot be recovered; a newer revision may be required."
-            cat "$recovery_error" >&2 || true
-            rm -f "$recovery_error" /tmp/recovered-ppa-pending.json
+
+            if [[ "$recovery_status" -eq 3 ]]; then
+              echo "Launchpad definitively has no active ppa${recovery_candidate} across the expected series; a newer revision may be published."
+              cat "$recovery_error" >&2 || true
+              rm -f "$recovery_error" /tmp/recovered-ppa-pending.json
+            else
+              echo "Could not determine safely whether active ppa${recovery_candidate} can be recovered; refusing to upload a newer revision." >&2
+              cat "$recovery_error" >&2 || true
+              rm -f "$recovery_error" /tmp/recovered-ppa-pending.json
+              exit "$recovery_status"
+            fi
           fi
 
           if (( archive_max_revision > recorded_revision )); then
