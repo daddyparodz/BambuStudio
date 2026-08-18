@@ -120,6 +120,11 @@ jobs:
           UPLOAD_INPUT: ${{ inputs.upload }}
           REVISION_INPUT: ${{ inputs.ppa_revision }}
         run: |
+          set -euo pipefail
+          if [[ "$UPLOAD_INPUT" == "true" && "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Production PPA uploads are allowed only from main." >&2
+            exit 1
+          fi
           echo "upload=$UPLOAD_INPUT" >> "$GITHUB_OUTPUT"
           echo "revision_override=$REVISION_INPUT" >> "$GITHUB_OUTPUT"
 
@@ -127,7 +132,9 @@ jobs:
         id: state
         env:
           SERIES_OVERRIDE: ${{ inputs.series }}
+          UPLOAD_ENABLED: ${{ steps.settings.outputs.upload }}
         run: |
+          set -euo pipefail
           channel="${{ steps.upstream.outputs.channel }}"
           if [[ "$channel" == "beta" ]]; then
             source_package_name="bambustudio-beta"
@@ -138,6 +145,8 @@ jobs:
           marker_file="state/latest-${channel}-tag.txt"
           commit_file="state/latest-${channel}-commit.txt"
           revision_file="state/latest-${channel}-revision.txt"
+          pending_file="state/pending-${channel}.json"
+          failed_file="state/failed-${channel}.json"
 
           read_release_state() {
             local path="$1"
@@ -146,6 +155,13 @@ jobs:
               return 1
             fi
             git show "refs/remotes/origin/release-state:${path}" | tr -d '\n'
+          }
+
+          read_optional_state() {
+            local path="$1"
+            if git cat-file -e "refs/remotes/origin/release-state:${path}" 2>/dev/null; then
+              git show "refs/remotes/origin/release-state:${path}"
+            fi
           }
 
           recorded_tag="$(read_release_state "$marker_file")"
@@ -157,6 +173,7 @@ jobs:
           revision_override="${{ steps.settings.outputs.revision_override }}"
           repo_content_changed=false
           changed_non_state_files=""
+          recover=false
 
           if [[ -n "$SERIES_OVERRIDE" ]]; then
             series_list="$SERIES_OVERRIDE"
@@ -179,6 +196,53 @@ jobs:
           if ! git rev-parse --verify -q "$recorded_commit^{commit}" >/dev/null; then
             echo "Recorded release commit is not present in repository history: $recorded_commit" >&2
             exit 1
+          fi
+
+          if [[ "$UPLOAD_ENABLED" == "true" ]]; then
+            pending_json="$(read_optional_state "$pending_file")"
+            if [[ -n "$pending_json" ]]; then
+              pending_status="$(jq -er '.status' <<<"$pending_json")"
+              pending_channel="$(jq -er '.channel' <<<"$pending_json")"
+              pending_revision="$(jq -er '.revision' <<<"$pending_json")"
+              [[ "$pending_status" == "pending" ]] || { echo "Invalid pending state status: $pending_status" >&2; exit 1; }
+              [[ "$pending_channel" == "$channel" ]] || { echo "Invalid pending state channel: $pending_channel" >&2; exit 1; }
+              [[ "$pending_revision" =~ ^[0-9]+$ ]] || { echo "Invalid pending revision: $pending_revision" >&2; exit 1; }
+              echo "A ${channel} release is already pending Launchpad verification at ppa${pending_revision}; skipping a new upload."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "revision=$pending_revision" >> "$GITHUB_OUTPUT"
+              echo "recover=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            failed_json="$(read_optional_state "$failed_file")"
+            if [[ -n "$failed_json" ]]; then
+              failed_tag="$(jq -er '.tag' <<<"$failed_json")"
+              failed_commit="$(jq -er '.commit' <<<"$failed_json")"
+              failed_revision="$(jq -er '.revision' <<<"$failed_json")"
+              failed_message="$(jq -r '.message // "unknown Launchpad failure"' <<<"$failed_json")"
+              [[ "$failed_commit" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "Invalid failed release commit: $failed_commit" >&2; exit 1; }
+              [[ "$failed_revision" =~ ^[0-9]+$ ]] || { echo "Invalid failed release revision: $failed_revision" >&2; exit 1; }
+
+              if [[ "$failed_tag" == "$current_tag" ]]; then
+                if [[ "$failed_commit" == "$current_commit" ]]; then
+                  echo "The current ${channel} release previously failed at ppa${failed_revision}: ${failed_message}" >&2
+                  exit 1
+                fi
+                if git rev-parse --verify -q "$failed_commit^{commit}" >/dev/null && \
+                   git merge-base --is-ancestor "$failed_commit" "$current_commit"; then
+                  changed_release_inputs="$(
+                    git diff --name-only "$failed_commit..$current_commit" \
+                      | grep -E '^(\.github/workflows/|packaging/|scripts/)' \
+                      || true
+                  )"
+                  if [[ -z "$changed_release_inputs" ]]; then
+                    echo "The latest ${channel} failure is unresolved and release inputs have not changed: ${failed_message}" >&2
+                    exit 1
+                  fi
+                  echo "Release inputs changed since the failed ${channel} ppa${failed_revision}; allowing a superseding upload."
+                fi
+              fi
+            fi
           fi
 
           if ! archive_max_revision="$(
@@ -205,7 +269,7 @@ jobs:
           if git merge-base --is-ancestor "$recorded_commit" "$current_commit"; then
             changed_non_state_files="$(
               git diff --name-only "$recorded_commit..$current_commit" \
-                | grep -Ev '^state/latest-[a-z0-9-]+-(tag|commit|revision)\.txt$' \
+                | grep -Ev '^state/(latest|pending|failed)-[a-z0-9-]+.*' \
                 || true
             )"
             if [[ -n "$changed_non_state_files" ]]; then
@@ -216,12 +280,12 @@ jobs:
           fi
 
           if [[ -n "$changed_non_state_files" ]]; then
-            echo "Changed non-state files since marker:"
+            echo "Changed non-state files since verified marker:"
             printf '%s\n' "$changed_non_state_files"
           else
-            echo "Changed non-state files since marker: (none)"
+            echo "Changed non-state files since verified marker: (none)"
           fi
-          echo "Repo content changed since marker (excluding state files): ${repo_content_changed}"
+          echo "Repo content changed since verified marker: ${repo_content_changed}"
 
           if [[ -n "$revision_override" ]]; then
             if ! [[ "$revision_override" =~ ^[0-9]+$ ]]; then
@@ -247,6 +311,10 @@ jobs:
           elif (( archive_max_revision > recorded_revision )); then
             revision="$archive_max_revision"
             skip=true
+            if [[ "$UPLOAD_ENABLED" == "true" ]]; then
+              recover=true
+              echo "Launchpad contains ppa${revision} beyond verified release-state; recovering it as pending instead of uploading again."
+            fi
           else
             revision="$recorded_revision"
             skip=true
@@ -254,6 +322,37 @@ jobs:
 
           echo "skip=$skip" >> "$GITHUB_OUTPUT"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "recover=$recover" >> "$GITHUB_OUTPUT"
+
+      - name: Recover existing Launchpad release as pending
+        if: steps.state.outputs.recover == 'true' && steps.settings.outputs.upload == 'true' && github.ref == 'refs/heads/main'
+        env:
+          SERIES_OVERRIDE: ${{ inputs.series }}
+        run: |
+          set -euo pipefail
+          channel="${{ steps.upstream.outputs.channel }}"
+          if [[ "$channel" == "beta" ]]; then
+            source_package_name="bambustudio-beta"
+          else
+            source_package_name="bambustudio"
+          fi
+          if [[ -n "$SERIES_OVERRIDE" ]]; then
+            series_list="$SERIES_OVERRIDE"
+          else
+            series_list="$(./scripts/list-ubuntu-series.sh)"
+          fi
+          bash ./scripts/discover-ppa-pending-manifest.sh \
+            --package "$source_package_name" \
+            --channel "$channel" \
+            --tag "${{ steps.upstream.outputs.tag }}" \
+            --commit "${{ github.sha }}" \
+            --revision "${{ steps.state.outputs.revision }}" \
+            --series "$series_list" \
+            > /tmp/ppa-pending.json
+          jq . /tmp/ppa-pending.json
+          bash ./scripts/record-ppa-pending-state.sh \
+            --channel "$channel" \
+            --manifest /tmp/ppa-pending.json
 
       - name: Import Launchpad signing key
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
@@ -295,6 +394,29 @@ jobs:
         run: |
           ./scripts/validate-generated-packages.sh dist
 
+      - name: Record pending release before upload
+        if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          channel="${{ steps.upstream.outputs.channel }}"
+          if [[ "$channel" == "beta" ]]; then
+            source_package_name="bambustudio-beta"
+          else
+            source_package_name="bambustudio"
+          fi
+          bash ./scripts/make-ppa-pending-manifest.sh \
+            --dist-dir dist \
+            --package "$source_package_name" \
+            --channel "$channel" \
+            --tag "${{ steps.upstream.outputs.tag }}" \
+            --commit "${{ github.sha }}" \
+            --revision "${{ steps.state.outputs.revision }}" \
+            > /tmp/ppa-pending.json
+          jq . /tmp/ppa-pending.json
+          bash ./scripts/record-ppa-pending-state.sh \
+            --channel "$channel" \
+            --manifest /tmp/ppa-pending.json
+
       - name: Upload to Launchpad
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
         env:
@@ -310,64 +432,7 @@ jobs:
             --package bambustudio-beta
           echo "Starting Launchpad source upload..."
           ./scripts/upload-ppa.sh dist/*_source.changes
-          echo "Launchpad source upload completed."
-
-      - name: Verify Launchpad publication and builds
-        if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
-        env:
-          CHANNEL: ${{ steps.upstream.outputs.channel }}
-        run: |
-          if [[ "$CHANNEL" == "beta" ]]; then
-            source_package_name="bambustudio-beta"
-          else
-            source_package_name="bambustudio"
-          fi
-          bash ./scripts/verify-ppa-release.sh \
-            --package "$source_package_name" \
-            --dist-dir dist
-
-      - name: Update packaged release marker
-        if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true' && success() && github.ref == 'refs/heads/main'
-        run: |
-          channel="${{ steps.upstream.outputs.channel }}"
-          marker_file="state/latest-${channel}-tag.txt"
-          commit_file="state/latest-${channel}-commit.txt"
-          revision_file="state/latest-${channel}-revision.txt"
-          state_worktree="$(mktemp -d)"
-          rmdir "$state_worktree"
-
-          cleanup_state_worktree() {
-            git worktree remove --force "$state_worktree" >/dev/null 2>&1 || true
-          }
-          trap cleanup_state_worktree EXIT
-
-          git fetch --no-tags origin release-state:refs/remotes/origin/release-state
-          git worktree add -B release-state "$state_worktree" refs/remotes/origin/release-state
-
-          pushd "$state_worktree" >/dev/null
-          printf '%s\n' "${{ steps.upstream.outputs.tag }}" > "$marker_file"
-          printf '%s\n' "${{ github.sha }}" > "$commit_file"
-          printf '%s\n' "${{ steps.state.outputs.revision }}" > "$revision_file"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$marker_file" "$commit_file" "$revision_file"
-          if git diff --cached --quiet; then
-            echo "Release-state branch already records this release; nothing to commit."
-            popd >/dev/null
-            exit 0
-          fi
-          git commit -m "chore: record ${{ steps.upstream.outputs.channel }} packaged release ${{ steps.upstream.outputs.tag }}-0ppa${{ steps.state.outputs.revision }}"
-          for attempt in 1 2 3; do
-            if git pull --rebase origin release-state && git push origin HEAD:release-state; then
-              break
-            fi
-            if [[ "$attempt" -eq 3 ]]; then
-              echo "Release-state push failed after retries." >&2
-              exit 1
-            fi
-            sleep 5
-          done
-          popd >/dev/null
+          echo "Launchpad source upload completed; asynchronous verification will promote the pending release."
 
       - name: Cleanup old workflow artifacts
         if: always()
