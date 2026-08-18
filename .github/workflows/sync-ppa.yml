@@ -46,7 +46,7 @@ on:
         required: false
         type: string
       retention_versions:
-        description: Number of source versions to retain per package and Ubuntu series
+        description: Maximum source versions retained per package and Ubuntu series after upload
         required: false
         default: 3
         type: number
@@ -78,6 +78,7 @@ jobs:
     outputs:
       cleanup_pending: ${{ steps.retention.outputs.cleanup_pending }}
       deletion_requests: ${{ steps.retention.outputs.deletion_requests }}
+      pending_deleted: ${{ steps.retention.outputs.pending_deleted }}
     steps:
       - name: Bootstrap cleanup container
         run: |
@@ -104,19 +105,39 @@ jobs:
         env:
           LAUNCHPAD_CREDENTIALS: ${{ secrets.LAUNCHPAD_CREDENTIALS }}
           RETENTION_VERSIONS: ${{ inputs.retention_versions || 3 }}
+          EVENT_NAME: ${{ github.event_name }}
+          UPLOAD_ENABLED: ${{ github.event_name != 'workflow_dispatch' || inputs.upload }}
+          CLEANUP_ONLY: ${{ inputs.cleanup_only || false }}
+          DISPATCH_CHANNEL: ${{ inputs.channel || 'stable' }}
         run: |
           set -euo pipefail
           result="$(mktemp)"
+          reserve_args=()
+
+          if [[ "$UPLOAD_ENABLED" == "true" && "$CLEANUP_ONLY" != "true" ]]; then
+            if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+              case "$DISPATCH_CHANNEL" in
+                stable) reserve_args+=(--reserve-package bambustudio) ;;
+                beta) reserve_args+=(--reserve-package bambustudio-beta) ;;
+                *) echo "Invalid dispatch channel: $DISPATCH_CHANNEL" >&2; exit 2 ;;
+              esac
+            else
+              reserve_args+=(--reserve-package bambustudio --reserve-package bambustudio-beta)
+            fi
+          fi
+
           bash ./scripts/prune-ppa.sh \
             --owner daddyparodz \
             --archive bambustudio \
             --package bambustudio \
             --package bambustudio-beta \
             --keep-versions "$RETENTION_VERSIONS" \
-            --result-json "$result"
+            --result-json "$result" \
+            "${reserve_args[@]}"
           jq . "$result"
           echo "cleanup_pending=$(jq -er '.cleanup_pending' "$result")" >> "$GITHUB_OUTPUT"
           echo "deletion_requests=$(jq -er '.deletion_requests' "$result")" >> "$GITHUB_OUTPUT"
+          echo "pending_deleted=$(jq -er '.pending_deleted' "$result")" >> "$GITHUB_OUTPUT"
 
       - name: Report cleanup gate
         run: |
