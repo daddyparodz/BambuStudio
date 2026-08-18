@@ -164,8 +164,20 @@ jobs:
             series_list="$(./scripts/list-ubuntu-series.sh)"
           fi
 
+          if [[ -z "${recorded_tag//[[:space:]]/}" ]]; then
+            echo "Invalid empty release tag on release-state." >&2
+            exit 1
+          fi
+          if [[ ! "$recorded_commit" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Invalid recorded release commit on release-state: $recorded_commit" >&2
+            exit 1
+          fi
           if [[ ! "$recorded_revision" =~ ^[0-9]+$ ]]; then
             echo "Invalid recorded release revision on release-state: $recorded_revision" >&2
+            exit 1
+          fi
+          if ! git rev-parse --verify -q "$recorded_commit^{commit}" >/dev/null; then
+            echo "Recorded release commit is not present in repository history: $recorded_commit" >&2
             exit 1
           fi
 
@@ -190,20 +202,16 @@ jobs:
             base_revision="$recorded_revision"
           fi
 
-          if [[ -n "$recorded_commit" ]] && git rev-parse --verify -q "$recorded_commit^{commit}" >/dev/null; then
-            if git merge-base --is-ancestor "$recorded_commit" "$current_commit"; then
-              changed_non_state_files="$(
-                git diff --name-only "$recorded_commit..$current_commit" \
-                  | grep -Ev '^state/latest-[a-z0-9-]+-(tag|commit|revision)\.txt$' \
-                  || true
-              )"
-              if [[ -n "$changed_non_state_files" ]]; then
-                repo_content_changed=true
-              fi
-            else
+          if git merge-base --is-ancestor "$recorded_commit" "$current_commit"; then
+            changed_non_state_files="$(
+              git diff --name-only "$recorded_commit..$current_commit" \
+                | grep -Ev '^state/latest-[a-z0-9-]+-(tag|commit|revision)\.txt$' \
+                || true
+            )"
+            if [[ -n "$changed_non_state_files" ]]; then
               repo_content_changed=true
             fi
-          elif [[ -n "$recorded_commit" ]]; then
+          else
             repo_content_changed=true
           fi
 
