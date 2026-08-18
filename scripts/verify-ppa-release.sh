@@ -114,6 +114,7 @@ except Exception as exc:
 
 source_states = []
 any_pending = False
+source_query_error = False
 failure_message = None
 missing_after_deadline = []
 failure_states = {
@@ -157,6 +158,7 @@ for expected in manifest["sources"]:
                 break
     except Exception as exc:
         entry["source_status"] = f"query-error: {exc}"
+        source_query_error = True
         any_pending = True
         source_states.append(entry)
         continue
@@ -194,6 +196,13 @@ for expected in manifest["sources"]:
 
 if failure_message:
     finish("failed", failure_message, source_states)
+
+if missing_after_deadline and source_query_error:
+    finish(
+        "pending",
+        "Launchpad source query errors prevent a reliable absent-vs-partial publication decision",
+        source_states,
+    )
 
 if missing_after_deadline:
     all_absent = (
