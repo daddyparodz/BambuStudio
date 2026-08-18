@@ -93,7 +93,9 @@ Fork-originated pull requests are not executed on self-hosted infrastructure. Sa
 
 ## PPA Retention and Release Safety
 
-The pruning policy keeps the newest published source for each package and each Ubuntu series independently. It does not delete the newest Jammy or Noble source just because a newer Resolute publication exists. This preserves the per-series orig tarballs required by later Debian revision uploads.
+The pruning policy keeps the newest three source versions for each package and each Ubuntu series by default. The count is configurable through the `retention_versions` input on the `Sync Launchpad PPA` workflow. Retention considers both `Published` and `Superseded` Launchpad source publications, so historical versions that have already been superseded are still explicitly scheduled for deletion together with their built binaries. The policy is applied independently to `bambustudio` and `bambustudio-beta` in every Ubuntu series.
+
+PPA retention runs before package build and upload. If versions outside the retention window are newly scheduled for deletion, or are still waiting for Launchpad deletion processing, the workflow records a successful cleanup-only run and skips package build/upload. A later scheduled run retries after Launchpad has reclaimed the old archive files. `workflow_dispatch` also exposes `cleanup_only` for an explicit prune-only run.
 
 Revision releases reuse the exact historical orig tarball. If an earlier retention run removed that file from the public PPA pool, the release helper searches all Launchpad source-publication states, follows paginated history, and recovers the retained Librarian copy. If Launchpad history cannot be queried completely or an existing orig cannot be recovered exactly, the release fails instead of regenerating a potentially different file under the same upstream filename.
 
