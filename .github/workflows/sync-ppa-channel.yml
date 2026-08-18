@@ -312,7 +312,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$marker_file" "$commit_file" "$revision_file"
-          git commit -m "chore: record ${{ steps.upstream.outputs.channel }} packaged release ${{ steps.upstream.outputs.tag }}-0ppa${{ steps.state.outputs.revision }}" || exit 0
+          if git diff --cached --quiet; then
+            echo "Release marker already records this state; nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore: record ${{ steps.upstream.outputs.channel }} packaged release ${{ steps.upstream.outputs.tag }}-0ppa${{ steps.state.outputs.revision }}"
           for attempt in 1 2 3; do
             if git pull --rebase origin main && git push origin HEAD:main; then
               break
