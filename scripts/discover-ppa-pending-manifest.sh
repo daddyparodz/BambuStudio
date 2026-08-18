@@ -23,12 +23,14 @@ release bookkeeping was not recorded. Only Pending or Published sources are
 eligible for recovery; inactive history must be superseded by a new revision.
 
 Exit status 3 means the requested revision is safe to supersede because
-Launchpad was queried successfully and no active source exists in any expected
-series, release-state already records that exact tag/revision as a terminal
-failure, or the requested tag differs from the verified channel tag and source
-commit provenance therefore cannot be established safely. Other nonzero
-statuses mean recovery could not be determined safely and callers must fail
-closed.
+Launchpad was queried successfully and either no active source exists, or the
+revision is reliably partial across the expected series with exactly one active
+source in each present series and no active source in at least one other series.
+It also covers release-state already recording that exact tag/revision as a
+terminal failure, or the requested tag differing from the verified channel tag
+when source commit provenance therefore cannot be established safely. API
+errors and ambiguous multiple active matches use other nonzero statuses so
+callers continue to fail closed.
 
 Because an older Launchpad artifact does not carry reliable Git commit
 provenance, recovery is limited to the currently verified channel tag and never
@@ -183,8 +185,17 @@ for series in series_list:
                 matches[version] = status
     matches_by_series[series] = matches
 
-active_match_count = sum(len(matches) for matches in matches_by_series.values())
-if active_match_count == 0:
+ambiguous = {series: matches for series, matches in matches_by_series.items() if len(matches) > 1}
+if ambiguous:
+    raise SystemExit(
+        f"Cannot safely recover {package} revision ppa{revision}: ambiguous active "
+        f"sources found {ambiguous}."
+    )
+
+present_series = [series for series, matches in matches_by_series.items() if len(matches) == 1]
+missing_series = [series for series, matches in matches_by_series.items() if len(matches) == 0]
+
+if not present_series:
     print(
         f"No active Launchpad sources found for {package} revision ppa{revision} "
         f"across expected series {series_list}",
@@ -192,15 +203,18 @@ if active_match_count == 0:
     )
     raise SystemExit(3)
 
+if missing_series:
+    print(
+        f"Launchpad revision ppa{revision} is reliably partial for {package}: "
+        f"present in {present_series}, missing in {missing_series}. A higher revision "
+        "may safely supersede this incomplete upload.",
+        file=sys.stderr,
+    )
+    raise SystemExit(3)
+
 sources = []
 for series in series_list:
     matches = matches_by_series[series]
-    if len(matches) != 1:
-        raise SystemExit(
-            f"Cannot safely recover {package} revision ppa{revision}: expected exactly one "
-            f"active source for {series}, found {matches}. Partial or ambiguous active "
-            f"history must not be superseded automatically."
-        )
     version = next(iter(matches))
     sources.append({"series": series, "version": version})
 
