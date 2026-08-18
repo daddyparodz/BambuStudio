@@ -260,9 +260,6 @@ jobs:
           fi
           echo "Archive max revision for ${source_package_name} ${current_tag}: ${archive_max_revision}"
 
-          # Recover a currently active Launchpad revision before considering
-          # repository changes. This prevents stale release-state bookkeeping
-          # from causing an unnecessary ppaN+1 upload after ppaN was accepted.
           recovery_candidate=0
           if [[ -z "$revision_override" && "$UPLOAD_ENABLED" == "true" ]]; then
             if [[ "$recorded_tag" != "$current_tag" && "$archive_max_revision" -gt 0 ]]; then
@@ -448,11 +445,6 @@ jobs:
           LAUNCHPAD_SFTP_LOGIN: daddyparodz
           PPA_UPLOAD_METHOD: auto
         run: |
-          bash ./scripts/prune-ppa.sh \
-            --owner daddyparodz \
-            --archive bambustudio \
-            --package bambustudio \
-            --package bambustudio-beta
           echo "Starting Launchpad source upload..."
           ./scripts/upload-ppa.sh dist/*_source.changes
           echo "Launchpad source upload completed; asynchronous verification will promote the pending release."

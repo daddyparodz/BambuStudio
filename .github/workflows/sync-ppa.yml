@@ -45,6 +45,16 @@ on:
         description: Optional space-separated Ubuntu series override
         required: false
         type: string
+      retention_versions:
+        description: Number of source versions to retain per package and Ubuntu series
+        required: false
+        default: 3
+        type: number
+      cleanup_only:
+        description: Prune the PPA without building or uploading packages
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -55,9 +65,79 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  prune:
+    name: prune PPA retention
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'workflow_dispatch' || inputs.upload || inputs.cleanup_only)
+    runs-on: [self-hosted, linux, x64]
+    container:
+      image: ubuntu:24.04
+      env:
+        DEBIAN_FRONTEND: noninteractive
+    outputs:
+      cleanup_pending: ${{ steps.retention.outputs.cleanup_pending }}
+      deletion_requests: ${{ steps.retention.outputs.deletion_requests }}
+    steps:
+      - name: Bootstrap cleanup container
+        run: |
+          set -euxo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            dpkg \
+            git \
+            jq \
+            python3 \
+            python3-launchpadlib
+          rm -rf /var/lib/apt/lists/*
+          command -v dpkg
+          command -v git
+          command -v jq
+          python3 -c "from launchpadlib.launchpad import Launchpad"
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Enforce PPA retention
+        id: retention
+        env:
+          LAUNCHPAD_CREDENTIALS: ${{ secrets.LAUNCHPAD_CREDENTIALS }}
+          RETENTION_VERSIONS: ${{ inputs.retention_versions || 3 }}
+        run: |
+          set -euo pipefail
+          result="$(mktemp)"
+          bash ./scripts/prune-ppa.sh \
+            --owner daddyparodz \
+            --archive bambustudio \
+            --package bambustudio \
+            --package bambustudio-beta \
+            --keep-versions "$RETENTION_VERSIONS" \
+            --result-json "$result"
+          jq . "$result"
+          echo "cleanup_pending=$(jq -er '.cleanup_pending' "$result")" >> "$GITHUB_OUTPUT"
+          echo "deletion_requests=$(jq -er '.deletion_requests' "$result")" >> "$GITHUB_OUTPUT"
+
+      - name: Report cleanup gate
+        run: |
+          if [[ "${{ steps.retention.outputs.cleanup_pending }}" == "true" ]]; then
+            echo "Older PPA publications are still being removed. Skipping package build/upload in this run."
+          else
+            echo "PPA retention is clean; package sync may proceed."
+          fi
+
   sync:
     name: sync (${{ matrix.channel }})
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: prune
+    if: >-
+      always() &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      !(github.event_name == 'workflow_dispatch' && inputs.cleanup_only) &&
+      (
+        github.event_name == 'pull_request' ||
+        (github.event_name == 'workflow_dispatch' && !inputs.upload) ||
+        (needs.prune.result == 'success' && needs.prune.outputs.cleanup_pending != 'true')
+      )
     strategy:
       max-parallel: 1
       fail-fast: false
