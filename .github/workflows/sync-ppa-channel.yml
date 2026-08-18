@@ -33,22 +33,23 @@ permissions:
   actions: write
 
 jobs:
-  sync-github-hosted:
-    name: ${{ inputs.channel }} (github-hosted)
-    runs-on: ubuntu-latest
+  sync:
+    name: ${{ inputs.channel }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
+    container:
+      image: ubuntu:24.04
+      env:
+        DEBIAN_FRONTEND: noninteractive
     defaults:
       run:
         shell: bash
-    steps: &sync_steps
-      - name: Install and verify dependencies
+    steps:
+      - name: Bootstrap container
         run: |
           set -euxo pipefail
-          SUDO=()
-          if (( EUID != 0 )); then
-            SUDO=(sudo)
-          fi
-          "${SUDO[@]}" apt-get update
-          "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             bash \
             build-essential \
             ca-certificates \
@@ -68,7 +69,7 @@ jobs:
             python3-launchpadlib \
             xdg-utils \
             xz-utils
-          "${SUDO[@]}" rm -rf /var/lib/apt/lists/*
+          rm -rf /var/lib/apt/lists/*
 
           command -v bash
           command -v curl
@@ -88,6 +89,11 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Trust workspace
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git status --short
 
       - name: Determine upstream tag
         id: upstream
@@ -125,6 +131,7 @@ jobs:
           else
             source_package_name="bambustudio"
           fi
+
           marker_file="state/latest-${channel}-tag.txt"
           commit_file="state/latest-${channel}-commit.txt"
           revision_file="state/latest-${channel}-revision.txt"
@@ -137,6 +144,7 @@ jobs:
           revision_override="${{ steps.settings.outputs.revision_override }}"
           repo_content_changed=false
           changed_non_state_files=""
+
           if [[ -n "$SERIES_OVERRIDE" ]]; then
             series_list="$SERIES_OVERRIDE"
           else
@@ -147,44 +155,19 @@ jobs:
             recorded_revision=1
           fi
 
-          archive_max_revision=0
-          # Query Pending and Published sources so a retry sees uploads that
-          # Launchpad accepted moments earlier even before they reach Sources.gz.
-          while IFS= read -r n; do
-            if [[ "$n" =~ ^[0-9]+$ ]] && (( n > archive_max_revision )); then
-              archive_max_revision="$n"
-            fi
-          done < <(SOURCE_PACKAGE_NAME="$source_package_name" UPSTREAM_VERSION="$upstream_version" SERIES_LIST="$series_list" python3 - <<'PY'
-          import json, os, re, urllib.parse, urllib.request
-          source_package_name = os.environ["SOURCE_PACKAGE_NAME"]
-          upstream_version = os.environ["UPSTREAM_VERSION"]
-          series_list = os.environ["SERIES_LIST"].split()
-          base = "https://api.launchpad.net/1.0/~daddyparodz/+archive/ubuntu/bambustudio"
-          statuses = ("Pending", "Published")
-          rx = re.compile(rf"^{re.escape(upstream_version)}\+[A-Za-z0-9]+-0ppa([0-9]+)~")
-          for series in series_list:
-            for st in statuses:
-              qs = urllib.parse.urlencode({
-                "ws.op": "getPublishedSources",
-                "source_name": source_package_name,
-                "exact_match": "true",
-                "distro_series": f"https://api.launchpad.net/1.0/ubuntu/{series}",
-                "status": st,
-                "order_by_date": "true",
-              })
-              url = f"{base}?{qs}"
-              try:
-                with urllib.request.urlopen(url, timeout=30) as r:
-                  data = json.load(r)
-              except Exception:
-                continue
-              for e in data.get("entries", []):
-                v = e.get("source_package_version", "")
-                m = rx.match(v)
-                if m:
-                  print(m.group(1))
-          PY
-          )
+          if ! archive_max_revision="$(
+            bash ./scripts/get-ppa-max-revision.sh \
+              --package "$source_package_name" \
+              --upstream-version "$upstream_version" \
+              --series "$series_list"
+          )"; then
+            echo "Could not determine the maximum historical PPA revision safely." >&2
+            exit 1
+          fi
+          if ! [[ "$archive_max_revision" =~ ^[0-9]+$ ]]; then
+            echo "Invalid maximum PPA revision returned: $archive_max_revision" >&2
+            exit 1
+          fi
           echo "Archive max revision for ${source_package_name} ${current_tag}: ${archive_max_revision}"
 
           if (( archive_max_revision > recorded_revision )); then
@@ -269,24 +252,18 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.upstream.outputs.tag }}
           PPA_REVISION: ${{ steps.state.outputs.revision }}
-          SOURCE_INCLUDE_MODE: auto
           SERIES_OVERRIDE: ${{ inputs.series }}
           CHANNEL: ${{ steps.upstream.outputs.channel }}
           DEBFULLNAME: daddyparodz
           DEBEMAIL: 45983094+daddyparodz@users.noreply.github.com
         run: |
-          if [[ -n "${SERIES_OVERRIDE:-}" ]]; then
-            series="$SERIES_OVERRIDE"
-          else
-            series="$(./scripts/list-ubuntu-series.sh)"
-          fi
-          echo "Using Ubuntu series: ${series}"
-          args=(--release-tag "$RELEASE_TAG" --series "$series")
           if [[ "${{ steps.settings.outputs.upload }}" == "true" ]]; then
             export DEBSIGN_KEYID="${LAUNCHPAD_GPG_FINGERPRINT}"
-            args+=(--sign)
+            export SIGN_SOURCE=1
+          else
+            export SIGN_SOURCE=0
           fi
-          ./scripts/build-source-package.sh --channel "$CHANNEL" "${args[@]}"
+          bash ./scripts/build-ppa-source-packages.sh
 
       - name: Validate generated source and binary payloads
         if: steps.state.outputs.skip != 'true'
@@ -299,7 +276,6 @@ jobs:
       - name: Upload to Launchpad
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
         env:
-          PPA_REVISION: ${{ steps.state.outputs.revision }}
           LAUNCHPAD_CREDENTIALS: ${{ secrets.LAUNCHPAD_CREDENTIALS }}
           LAUNCHPAD_SSH_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_SSH_PRIVATE_KEY }}
           LAUNCHPAD_SFTP_LOGIN: daddyparodz
@@ -314,9 +290,22 @@ jobs:
           ./scripts/upload-ppa.sh dist/*_source.changes
           echo "Launchpad source upload completed."
 
+      - name: Verify Launchpad publication and builds
+        if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true'
+        env:
+          CHANNEL: ${{ steps.upstream.outputs.channel }}
+        run: |
+          if [[ "$CHANNEL" == "beta" ]]; then
+            source_package_name="bambustudio-beta"
+          else
+            source_package_name="bambustudio"
+          fi
+          bash ./scripts/verify-ppa-release.sh \
+            --package "$source_package_name" \
+            --dist-dir dist
+
       - name: Update packaged release marker
         if: steps.state.outputs.skip != 'true' && steps.settings.outputs.upload == 'true' && success() && github.ref == 'refs/heads/main'
-        continue-on-error: true
         run: |
           channel="${{ steps.upstream.outputs.channel }}"
           marker_file="state/latest-${channel}-tag.txt"
@@ -328,7 +317,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$marker_file" "$commit_file" "$revision_file"
-          git commit -m "chore: record ${{ steps.upstream.outputs.channel }} packaged release ${{ steps.upstream.outputs.tag }}-0ppa${{ steps.state.outputs.revision }}" || exit 0
+          if git diff --cached --quiet; then
+            echo "Release marker already records this state; nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore: record ${{ steps.upstream.outputs.channel }} packaged release ${{ steps.upstream.outputs.tag }}-0ppa${{ steps.state.outputs.revision }}"
           for attempt in 1 2 3; do
             if git pull --rebase origin main && git push origin HEAD:main; then
               break
@@ -354,17 +347,3 @@ jobs:
               gh api --method DELETE repos/${{ github.repository }}/actions/artifacts/"$artifact_id"
               echo "Deleted artifact id=$artifact_id"
             done
-
-  sync-self-hosted:
-    name: ${{ inputs.channel }} (self-hosted fallback)
-    needs: sync-github-hosted
-    if: ${{ always() && needs.sync-github-hosted.result != 'success' }}
-    runs-on: [self-hosted, linux, x64]
-    container:
-      image: ubuntu:24.04
-      env:
-        DEBIAN_FRONTEND: noninteractive
-    defaults:
-      run:
-        shell: bash
-    steps: *sync_steps

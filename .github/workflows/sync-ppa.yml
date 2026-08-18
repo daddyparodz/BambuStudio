@@ -15,6 +15,8 @@ on:
     paths:
       - '.github/workflows/sync-ppa.yml'
       - '.github/workflows/sync-ppa-channel.yml'
+      - 'packaging/**'
+      - 'scripts/**'
   workflow_dispatch:
     inputs:
       release_tag:
@@ -49,16 +51,17 @@ permissions:
 
 concurrency:
   group: sync-ppa-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'production' }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   sync:
     name: sync (${{ matrix.channel }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       max-parallel: 1
       fail-fast: false
       matrix:
-        channel: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.channel) || github.event_name == 'pull_request' && '["stable"]' || '["stable","beta"]') }}
+        channel: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.channel) || '["stable","beta"]') }}
     uses: ./.github/workflows/sync-ppa-channel.yml
     with:
       channel: ${{ matrix.channel }}
