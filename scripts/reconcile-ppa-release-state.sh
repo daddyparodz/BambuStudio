@@ -34,6 +34,12 @@ for attempt in 1 2 3; do
       pending)
         echo "${channel}: still pending"
         ;;
+      retryable)
+        message="$(jq -r '.message // "upload did not reach Launchpad"' "$result")"
+        rm -f "$pending" "$state_worktree/state/failed-${channel}.json"
+        changed=true
+        echo "${channel}: cleared pending state for controlled retry: ${message}"
+        ;;
       success)
         tag="$(jq -r '.tag' "$result")"
         commit="$(jq -r '.commit' "$result")"
