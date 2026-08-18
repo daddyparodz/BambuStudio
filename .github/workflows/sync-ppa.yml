@@ -1,3 +1,4 @@
+# E2E production pipeline probe: 2026-08-18
 name: Sync Launchpad PPA
 
 on:
