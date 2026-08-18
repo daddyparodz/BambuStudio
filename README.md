@@ -97,9 +97,13 @@ The pruning policy keeps the newest published source for each package and each U
 
 Revision releases reuse the exact historical orig tarball. If an earlier retention run removed that file from the public PPA pool, the release helper searches all Launchpad source-publication states, follows paginated history, and recovers the retained Librarian copy. If Launchpad history cannot be queried completely or an existing orig cannot be recovered exactly, the release fails instead of regenerating a potentially different file under the same upstream filename.
 
-The workflow also resolves the highest historical PPA revision through a retrying, paginated, fail-closed Launchpad query. After upload it waits for Launchpad to accept every exact source version and for the corresponding builds to succeed. Only then does it update the authoritative release markers on the dedicated `release-state` branch. This lets `main` remain protected and require pull requests while release bookkeeping stays writable by the workflow. A failure to record the verified state on `release-state` after retries fails the release.
+Production uploads no longer keep the self-hosted runner occupied while Launchpad builds packages. Immediately before `dput`, the workflow records an exact `state/pending-<channel>.json` manifest on the dedicated `release-state` branch. The manifest contains the upstream tag, repository commit, PPA revision, and exact source version expected for every Ubuntu series. A later sync sees the pending state and will not upload another revision for that channel.
 
-The `state/latest-*-*.txt` files on `main` are legacy snapshots and are not used for release decisions. The authoritative stable and beta tag, commit, and PPA revision markers live on `release-state`.
+The separate `Verify Launchpad PPA Publications` workflow runs every 10 minutes. Each run performs one Launchpad status check and exits immediately. If sources or builds are still pending, it leaves the manifest unchanged. When all expected builds succeed, it promotes the pending manifest to the authoritative `state/latest-*-*.txt` markers and removes the pending state. A terminal Launchpad build failure is recorded once as `state/failed-<channel>.json`; the same release is not retried automatically until the upstream tag or release inputs change. If an upload reached Launchpad but its pending bookkeeping was lost, the sync can recover the existing historical revision as pending instead of uploading a duplicate.
+
+A source that never becomes visible on Launchpad is treated as failed after 30 minutes. Temporary Launchpad API errors are treated as pending and retried by the next verifier run rather than holding a runner open.
+
+The `state/latest-*-*.txt` files on `main` are legacy snapshots and are not used for release decisions. The authoritative stable and beta verified markers, pending manifests, and failure records live on `release-state`.
 
 ## Release Cadence
 
@@ -108,7 +112,7 @@ The PPA checks upstream releases automatically every 6 hours and publishes:
 - latest stable to `bambustudio`
 - latest beta to `bambustudio-beta`
 
-Packaging and release-automation changes pushed to `main` also run the sync immediately, so validated packaging changes do not have to wait for the next six-hour poll.
+Packaging and release-automation changes pushed to `main` also run the sync immediately, so validated packaging changes do not have to wait for the next six-hour poll. Launchpad verification is decoupled from that cadence and runs independently every 10 minutes while consuming the runner only for a short status check.
 
 ## Known Issues
 
