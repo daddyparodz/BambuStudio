@@ -21,9 +21,9 @@ free for the impending upload, so only N-1 existing active versions are kept.
 When --reserve-series is supplied, that reservation applies only to those Ubuntu
 series; otherwise it applies to every series for the reserved package.
 Published and Superseded publications outside the retention window are
-explicitly scheduled for deletion. Deleted publication history is considered
-cleanup-pending only while Launchpad exposes a scheduled deletion date for that
-publication; terminal Deleted history no longer blocks later uploads.
+explicitly scheduled for deletion. Deleted publication history is considered cleanup-pending only while Launchpad
+exposes a scheduled deletion date and no removal date for that publication;
+terminal Deleted history no longer blocks later uploads.
 
 Requires:
   - python3-launchpadlib installed
@@ -244,6 +244,13 @@ def scheduled_deletion(pub):
     )
 
 
+def removal_date(pub):
+    return (
+        getattr(pub, "date_removed", None)
+        or getattr(pub, "dateremoved", None)
+    )
+
+
 owner = os.environ["PRUNE_OWNER"]
 archive = os.environ["PRUNE_ARCHIVE"]
 packages = [p for p in os.environ["PRUNE_PACKAGES_CSV"].split(",") if p]
@@ -303,7 +310,8 @@ for pkg in packages:
             continue
         seen_deleted.add(key)
         scheduled = scheduled_deletion(pub)
-        if not scheduled:
+        removed = removal_date(pub)
+        if not scheduled or removed:
             terminal_deleted += 1
             continue
         pending_deleted += 1
