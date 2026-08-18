@@ -22,6 +22,10 @@ JSON manifest. This is used to recover state after an upload succeeded but
 release bookkeeping was not recorded. Only Pending or Published sources are
 eligible for recovery; inactive history must be superseded by a new revision.
 
+Exit status 3 means Launchpad was queried successfully and no active source for
+the requested revision exists in any expected series. Other nonzero statuses
+mean recovery could not be determined safely and callers must fail closed.
+
 Because an older Launchpad artifact does not carry reliable Git commit
 provenance, recovery never attributes it to a newer current commit. It records
 the previously verified release-state commit as a conservative packaged
@@ -96,6 +100,7 @@ python3 - <<'PY'
 import json
 import os
 import re
+import sys
 
 from launchpadlib.launchpad import Launchpad
 
@@ -120,7 +125,7 @@ lp = Launchpad.login_anonymously(
 ppa = lp.people[owner].getPPAByName(name=archive_name)
 ubuntu = lp.distributions["ubuntu"]
 
-sources = []
+matches_by_series = {}
 for series in series_list:
     distro_series = ubuntu.getSeries(name_or_version=series)
     matches = {}
@@ -136,10 +141,25 @@ for series in series_list:
             version = str(pub.source_package_version)
             if rx.match(version):
                 matches[version] = status
+    matches_by_series[series] = matches
+
+active_match_count = sum(len(matches) for matches in matches_by_series.values())
+if active_match_count == 0:
+    print(
+        f"No active Launchpad sources found for {package} revision ppa{revision} "
+        f"across expected series {series_list}",
+        file=sys.stderr,
+    )
+    raise SystemExit(3)
+
+sources = []
+for series in series_list:
+    matches = matches_by_series[series]
     if len(matches) != 1:
         raise SystemExit(
-            f"Expected exactly one active Launchpad source for {package} {series} "
-            f"revision ppa{revision}, found {matches}"
+            f"Cannot safely recover {package} revision ppa{revision}: expected exactly one "
+            f"active source for {series}, found {matches}. Partial or ambiguous active "
+            f"history must not be superseded automatically."
         )
     version = next(iter(matches))
     sources.append({"series": series, "version": version})
