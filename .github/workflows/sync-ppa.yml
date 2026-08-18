@@ -105,35 +105,16 @@ jobs:
         env:
           LAUNCHPAD_CREDENTIALS: ${{ secrets.LAUNCHPAD_CREDENTIALS }}
           RETENTION_VERSIONS: ${{ inputs.retention_versions || 3 }}
-          EVENT_NAME: ${{ github.event_name }}
-          UPLOAD_ENABLED: ${{ github.event_name != 'workflow_dispatch' || inputs.upload }}
-          CLEANUP_ONLY: ${{ inputs.cleanup_only || false }}
-          DISPATCH_CHANNEL: ${{ inputs.channel || 'stable' }}
         run: |
           set -euo pipefail
           result="$(mktemp)"
-          reserve_args=()
-
-          if [[ "$UPLOAD_ENABLED" == "true" && "$CLEANUP_ONLY" != "true" ]]; then
-            if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-              case "$DISPATCH_CHANNEL" in
-                stable) reserve_args+=(--reserve-package bambustudio) ;;
-                beta) reserve_args+=(--reserve-package bambustudio-beta) ;;
-                *) echo "Invalid dispatch channel: $DISPATCH_CHANNEL" >&2; exit 2 ;;
-              esac
-            else
-              reserve_args+=(--reserve-package bambustudio --reserve-package bambustudio-beta)
-            fi
-          fi
-
           bash ./scripts/prune-ppa.sh \
             --owner daddyparodz \
             --archive bambustudio \
             --package bambustudio \
             --package bambustudio-beta \
             --keep-versions "$RETENTION_VERSIONS" \
-            --result-json "$result" \
-            "${reserve_args[@]}"
+            --result-json "$result"
           jq . "$result"
           echo "cleanup_pending=$(jq -er '.cleanup_pending' "$result")" >> "$GITHUB_OUTPUT"
           echo "deletion_requests=$(jq -er '.deletion_requests' "$result")" >> "$GITHUB_OUTPUT"
@@ -171,4 +152,5 @@ jobs:
       ppa_revision: ${{ inputs.ppa_revision || '' }}
       upload: ${{ (github.event_name == 'workflow_dispatch' && inputs.upload) || (github.event_name != 'workflow_dispatch' && github.event_name != 'pull_request') }}
       series: ${{ inputs.series || '' }}
+      retention_versions: ${{ inputs.retention_versions || 3 }}
     secrets: inherit
