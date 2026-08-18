@@ -266,28 +266,40 @@ for pkg in packages:
         for version in drop:
             pub = version_map[version]
             status = publication_status(pub)
+            scheduled = scheduled_deletion(pub)
             excess_publications += 1
             cleanup_pending += 1
-            scheduled = scheduled_deletion(pub)
-            if scheduled:
-                already_scheduled += 1
-                print(
-                    f"{pkg}/{series}: {version} status={status} already scheduled for deletion at {scheduled}"
-                )
-                continue
 
             if dry_run:
-                print(f"{pkg}/{series}: would delete {version} status={status}")
+                schedule_note = f" scheduled={scheduled}" if scheduled else ""
+                print(f"{pkg}/{series}: would delete {version} status={status}{schedule_note}")
                 continue
 
-            print(f"{pkg}/{series}: deleting {version} status={status}")
-            pub.requestDeletion(
-                removal_comment=(
-                    "Automated PPA retention policy: keep only the newest "
-                    f"{keep_versions} source version(s) for {pkg} in Ubuntu {series}."
+            if scheduled:
+                print(
+                    f"{pkg}/{series}: accelerating deletion of {version} status={status}; "
+                    f"automatic deletion was scheduled for {scheduled}"
                 )
-            )
-            deleted += 1
+            else:
+                print(f"{pkg}/{series}: deleting {version} status={status}")
+
+            try:
+                pub.requestDeletion(
+                    removal_comment=(
+                        "Automated PPA retention policy: keep only the newest "
+                        f"{keep_versions} source version(s) for {pkg} in Ubuntu {series}."
+                    )
+                )
+                deleted += 1
+            except Exception as exc:
+                if scheduled:
+                    already_scheduled += 1
+                    print(
+                        f"{pkg}/{series}: explicit deletion request for {version} was not accepted "
+                        f"({exc}); existing scheduled deletion remains in effect"
+                    )
+                    continue
+                raise
 
 summary = {
     "schema": 1,
