@@ -79,7 +79,7 @@ gtk-launch bambustudio-beta
 
 All GitHub Actions validation and PPA release jobs run only on a Linux x64 self-hosted runner with the default labels `self-hosted`, `linux`, and `x64`. Each job executes inside a clean `ubuntu:24.04` GitHub Actions job container.
 
-The workflows install and verify their build, packaging, signing, Launchpad, SSH, and GitHub CLI dependencies inside the job container. The runner host therefore only needs the GitHub Actions runner and Docker, not the Debian packaging toolchain itself.
+The workflows install and verify their build, packaging, signing, Launchpad, SFTP/SSH, and GitHub CLI dependencies inside the job container. The runner host therefore only needs the GitHub Actions runner and Docker, not the Debian packaging toolchain itself.
 
 Runner requirements:
 
@@ -97,7 +97,9 @@ The pruning policy keeps the newest published source for each package and each U
 
 Revision releases reuse the exact historical orig tarball. If an earlier retention run removed that file from the public PPA pool, the release helper searches all Launchpad source-publication states, follows paginated history, and recovers the retained Librarian copy. If Launchpad history cannot be queried completely or an existing orig cannot be recovered exactly, the release fails instead of regenerating a potentially different file under the same upstream filename.
 
-The workflow also resolves the highest historical PPA revision through a retrying, paginated, fail-closed Launchpad query. After upload it waits for Launchpad to accept every exact source version and for the corresponding builds to succeed. Only then does it write the release marker back to `main`, and failure to record that marker after retries fails the release.
+The workflow also resolves the highest historical PPA revision through a retrying, paginated, fail-closed Launchpad query. After upload it waits for Launchpad to accept every exact source version and for the corresponding builds to succeed. Only then does it update the authoritative release markers on the dedicated `release-state` branch. This lets `main` remain protected and require pull requests while release bookkeeping stays writable by the workflow. A failure to record the verified state on `release-state` after retries fails the release.
+
+The `state/latest-*-*.txt` files on `main` are legacy snapshots and are not used for release decisions. The authoritative stable and beta tag, commit, and PPA revision markers live on `release-state`.
 
 ## Release Cadence
 
