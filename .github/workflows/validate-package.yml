@@ -58,6 +58,7 @@ jobs:
             openssh-client \
             python3 \
             python3-launchpadlib \
+            python3-paramiko \
             xdg-utils \
             xz-utils
           rm -rf /var/lib/apt/lists/*
@@ -78,7 +79,7 @@ jobs:
           command -v ssh
           command -v ssh-keyscan
           command -v ubuntu-distro-info
-          python3 -c "from launchpadlib.launchpad import Launchpad"
+          python3 -c "import paramiko; from launchpadlib.launchpad import Launchpad"
 
       - name: Checkout
         uses: actions/checkout@v5
