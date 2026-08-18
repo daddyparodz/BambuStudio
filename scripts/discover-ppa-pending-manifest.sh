@@ -21,6 +21,12 @@ Discovers an already accepted active Launchpad revision and prints a pending
 JSON manifest. This is used to recover state after an upload succeeded but
 release bookkeeping was not recorded. Only Pending or Published sources are
 eligible for recovery; inactive history must be superseded by a new revision.
+
+Because an older Launchpad artifact does not carry reliable Git commit
+provenance, recovery never attributes it to a newer current commit. It records
+the previously verified release-state commit as a conservative packaged
+baseline, so any repository changes after that commit are still rebuilt by the
+next sync.
 USAGE
   exit 2
 }
@@ -41,14 +47,45 @@ done
 [[ -n "$PACKAGE" ]] || usage
 [[ "$CHANNEL" == "stable" || "$CHANNEL" == "beta" ]] || { echo "Invalid channel: $CHANNEL" >&2; exit 2; }
 [[ -n "$TAG" ]] || usage
-[[ "$COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "Invalid commit: $COMMIT" >&2; exit 2; }
+[[ "$COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "Invalid current commit: $COMMIT" >&2; exit 2; }
 [[ "$REVISION" =~ ^[0-9]+$ ]] || { echo "Invalid revision: $REVISION" >&2; exit 2; }
 [[ -n "$SERIES" ]] || usage
+
+repo_root="$(git rev-parse --show-toplevel)"
+release_state_ref="refs/remotes/origin/release-state"
+verified_commit_path="state/latest-${CHANNEL}-commit.txt"
+
+if ! git -C "$repo_root" cat-file -e "${release_state_ref}:${verified_commit_path}" 2>/dev/null; then
+  echo "Cannot recover ${CHANNEL}: missing verified release-state commit marker." >&2
+  exit 1
+fi
+verified_commit="$(git -C "$repo_root" show "${release_state_ref}:${verified_commit_path}" | tr -d '\n')"
+if [[ ! "$verified_commit" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo "Cannot recover ${CHANNEL}: invalid verified release-state commit: $verified_commit" >&2
+  exit 1
+fi
+if ! git -C "$repo_root" cat-file -e "${verified_commit}^{commit}" 2>/dev/null; then
+  echo "Cannot recover ${CHANNEL}: verified commit is not present in repository history: $verified_commit" >&2
+  exit 1
+fi
+if ! git -C "$repo_root" merge-base --is-ancestor "$verified_commit" "$COMMIT"; then
+  echo "Cannot recover ${CHANNEL}: verified commit $verified_commit is not an ancestor of current commit $COMMIT" >&2
+  exit 1
+fi
+
+if [[ "$verified_commit" == "$COMMIT" ]]; then
+  commit_provenance="verified-current"
+else
+  commit_provenance="verified-baseline"
+  echo "Recovery will keep verified baseline commit $verified_commit instead of attributing the older artifact to current commit $COMMIT." >&2
+fi
 
 export PPA_DISCOVER_PACKAGE="$PACKAGE"
 export PPA_DISCOVER_CHANNEL="$CHANNEL"
 export PPA_DISCOVER_TAG="$TAG"
-export PPA_DISCOVER_COMMIT="$COMMIT"
+export PPA_DISCOVER_COMMIT="$verified_commit"
+export PPA_DISCOVER_REQUESTED_COMMIT="$COMMIT"
+export PPA_DISCOVER_COMMIT_PROVENANCE="$commit_provenance"
 export PPA_DISCOVER_REVISION="$REVISION"
 export PPA_DISCOVER_SERIES="$SERIES"
 export PPA_DISCOVER_OWNER="$OWNER"
@@ -66,6 +103,8 @@ package = os.environ["PPA_DISCOVER_PACKAGE"]
 channel = os.environ["PPA_DISCOVER_CHANNEL"]
 tag = os.environ["PPA_DISCOVER_TAG"]
 commit = os.environ["PPA_DISCOVER_COMMIT"]
+requested_commit = os.environ["PPA_DISCOVER_REQUESTED_COMMIT"]
+commit_provenance = os.environ["PPA_DISCOVER_COMMIT_PROVENANCE"]
 revision = int(os.environ["PPA_DISCOVER_REVISION"])
 series_list = os.environ["PPA_DISCOVER_SERIES"].split()
 owner = os.environ["PPA_DISCOVER_OWNER"]
@@ -115,6 +154,8 @@ manifest = {
     "revision": revision,
     "created_at": os.environ["PPA_DISCOVER_CREATED_AT"],
     "recovered": True,
+    "commit_provenance": commit_provenance,
+    "recovery_requested_commit": requested_commit,
     "sources": sources,
 }
 print(json.dumps(manifest, indent=2, sort_keys=True))
