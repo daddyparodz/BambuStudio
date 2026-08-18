@@ -22,17 +22,19 @@ JSON manifest. This is used to recover state after an upload succeeded but
 release bookkeeping was not recorded. Only Pending or Published sources are
 eligible for recovery; inactive history must be superseded by a new revision.
 
-Exit status 3 means the requested revision is safe to supersede because either
+Exit status 3 means the requested revision is safe to supersede because
 Launchpad was queried successfully and no active source exists in any expected
-series, or release-state already records that exact tag/revision as a terminal
-failure. Other nonzero statuses mean recovery could not be determined safely
-and callers must fail closed.
+series, release-state already records that exact tag/revision as a terminal
+failure, or the requested tag differs from the verified channel tag and source
+commit provenance therefore cannot be established safely. Other nonzero
+statuses mean recovery could not be determined safely and callers must fail
+closed.
 
 Because an older Launchpad artifact does not carry reliable Git commit
-provenance, recovery never attributes it to a newer current commit. It records
-the previously verified release-state commit as a conservative packaged
-baseline, so any repository changes after that commit are still rebuilt by the
-next sync.
+provenance, recovery is limited to the currently verified channel tag and never
+attributes an artifact to a newer current commit. It records the previously
+verified release-state commit as a conservative packaged baseline, so any
+repository changes after that commit are still rebuilt by the next sync.
 USAGE
   exit 2
 }
@@ -59,8 +61,29 @@ done
 
 repo_root="$(git rev-parse --show-toplevel)"
 release_state_ref="refs/remotes/origin/release-state"
+verified_tag_path="state/latest-${CHANNEL}-tag.txt"
 verified_commit_path="state/latest-${CHANNEL}-commit.txt"
 failed_release_path="state/failed-${CHANNEL}.json"
+
+if ! git -C "$repo_root" cat-file -e "${release_state_ref}:${verified_tag_path}" 2>/dev/null; then
+  echo "Cannot recover ${CHANNEL}: missing verified release-state tag marker." >&2
+  exit 1
+fi
+verified_tag="$(git -C "$repo_root" show "${release_state_ref}:${verified_tag_path}" | tr -d '\n')"
+if [[ -z "${verified_tag//[[:space:]]/}" ]]; then
+  echo "Cannot recover ${CHANNEL}: verified release-state tag is empty." >&2
+  exit 1
+fi
+
+# Launchpad source publications do not provide enough Git provenance to prove
+# which repository commit produced an artifact from a different release tag.
+# In particular, an explicit rollback to an older tag must never stamp the
+# newer verified commit onto that historical artifact. Publish a fresh revision
+# instead of recovering across a tag boundary.
+if [[ "$verified_tag" != "$TAG" ]]; then
+  echo "Recovery skipped for ${CHANNEL} ${TAG} ppa${REVISION}: verified channel tag is ${verified_tag}, so cross-tag source commit provenance cannot be established safely." >&2
+  exit 3
+fi
 
 if ! git -C "$repo_root" cat-file -e "${release_state_ref}:${verified_commit_path}" 2>/dev/null; then
   echo "Cannot recover ${CHANNEL}: missing verified release-state commit marker." >&2
