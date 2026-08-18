@@ -10,9 +10,9 @@ ARCHIVE="${PPA_ARCHIVE:-bambustudio}"
 
 usage() {
   cat >&2 <<'EOF'
-Usage: fetch-ppa-origs.sh --package NAME --upstream-version VERSION --series "jammy noble" --output-dir DIR
+Usage: fetch-ppa-origs.sh --package NAME --upstream-version VERSION --series SERIES --output-dir DIR
 
-Fetches the exact existing orig tarball for each Ubuntu series. It first uses the
+Fetches the exact existing orig tarball for one Ubuntu series. It first uses the
 public PPA pool. If a file was removed from the pool by an earlier retention
 mistake, it asks Launchpad for historical source publications and downloads the
 retained Librarian copy.
@@ -57,6 +57,10 @@ done
 [[ -n "$UPSTREAM_VERSION" ]] || usage
 [[ -n "$SERIES" ]] || usage
 [[ -n "$OUTPUT_DIR" ]] || usage
+if [[ "$SERIES" =~ [[:space:]] ]]; then
+  echo "--series accepts exactly one Ubuntu series per invocation" >&2
+  exit 2
+fi
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -78,6 +82,8 @@ import urllib.request
 package = os.environ["FETCH_PPA_PACKAGE"]
 upstream = os.environ["FETCH_PPA_UPSTREAM_VERSION"]
 series_list = os.environ["FETCH_PPA_SERIES"].split()
+if len(series_list) != 1:
+    raise SystemExit("fetch-ppa-origs.sh requires exactly one Ubuntu series per invocation")
 outdir = pathlib.Path(os.environ["FETCH_PPA_OUTPUT_DIR"])
 owner = os.environ["FETCH_PPA_OWNER"]
 archive = os.environ["FETCH_PPA_ARCHIVE"]
