@@ -17,9 +17,10 @@ Usage: discover-ppa-pending-manifest.sh \
   --package NAME --channel CHANNEL --tag TAG --commit SHA --revision N \
   --series "jammy noble"
 
-Discovers an already accepted Launchpad revision and prints a pending JSON
-manifest. This is used to recover state after an upload succeeded but release
-bookkeeping was not recorded.
+Discovers an already accepted active Launchpad revision and prints a pending
+JSON manifest. This is used to recover state after an upload succeeded but
+release bookkeeping was not recorded. Only Pending or Published sources are
+eligible for recovery; inactive history must be superseded by a new revision.
 USAGE
   exit 2
 }
@@ -84,7 +85,7 @@ sources = []
 for series in series_list:
     distro_series = ubuntu.getSeries(name_or_version=series)
     matches = {}
-    for status in ("Pending", "Published", "Superseded", "Deleted", "Obsolete"):
+    for status in ("Pending", "Published"):
         pubs = ppa.getPublishedSources(
             source_name=package,
             exact_match=True,
@@ -98,7 +99,7 @@ for series in series_list:
                 matches[version] = status
     if len(matches) != 1:
         raise SystemExit(
-            f"Expected exactly one Launchpad source for {package} {series} "
+            f"Expected exactly one active Launchpad source for {package} {series} "
             f"revision ppa{revision}, found {matches}"
         )
     version = next(iter(matches))
