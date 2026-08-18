@@ -45,6 +45,11 @@ on:
         description: Optional space-separated Ubuntu series override
         required: false
         type: string
+      retention_versions:
+        description: Number of source versions to retain per package and Ubuntu series
+        required: false
+        default: 3
+        type: number
 
 permissions:
   contents: write
@@ -70,4 +75,5 @@ jobs:
       ppa_revision: ${{ inputs.ppa_revision || '' }}
       upload: ${{ (github.event_name == 'workflow_dispatch' && inputs.upload) || (github.event_name != 'workflow_dispatch' && github.event_name != 'pull_request') }}
       series: ${{ inputs.series || '' }}
+      retention_versions: ${{ inputs.retention_versions || 3 }}
     secrets: inherit
