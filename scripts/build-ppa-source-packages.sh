@@ -101,6 +101,20 @@ for series in $SERIES; do
 
   echo "Building ${SOURCE_PACKAGE_NAME} for ${series}: revision=${PPA_REVISION}, source_mode=${include_mode}"
   bash "$SCRIPT_DIR/build-source-package.sh" "${args[@]}"
+
+  if [[ "$include_mode" == "exclude-orig" ]]; then
+    expected_orig="$orig_cache/${SOURCE_PACKAGE_NAME}_${UPSTREAM_VERSION}+${series}.orig.tar.xz"
+    built_orig="$build_root/$series/${SOURCE_PACKAGE_NAME}_${UPSTREAM_VERSION}+${series}.orig.tar.xz"
+    if [[ ! -f "$expected_orig" || ! -f "$built_orig" ]]; then
+      echo "Exact orig verification failed for ${SOURCE_PACKAGE_NAME}/${series}: expected recovery/build file is missing" >&2
+      exit 1
+    fi
+    if ! cmp -s "$expected_orig" "$built_orig"; then
+      echo "Exact orig verification failed for ${SOURCE_PACKAGE_NAME}/${series}: build did not preserve recovered bytes" >&2
+      exit 1
+    fi
+    echo "ORIG VERIFIED: ${SOURCE_PACKAGE_NAME}/${series} build reused exact recovered bytes"
+  fi
 done
 
 echo "Built PPA source packages for ${CHANNEL} ${RELEASE_TAG} into ${OUTPUT_DIR}"
