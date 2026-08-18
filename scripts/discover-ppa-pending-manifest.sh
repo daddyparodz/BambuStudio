@@ -22,9 +22,11 @@ JSON manifest. This is used to recover state after an upload succeeded but
 release bookkeeping was not recorded. Only Pending or Published sources are
 eligible for recovery; inactive history must be superseded by a new revision.
 
-Exit status 3 means Launchpad was queried successfully and no active source for
-the requested revision exists in any expected series. Other nonzero statuses
-mean recovery could not be determined safely and callers must fail closed.
+Exit status 3 means the requested revision is safe to supersede because either
+Launchpad was queried successfully and no active source exists in any expected
+series, or release-state already records that exact tag/revision as a terminal
+failure. Other nonzero statuses mean recovery could not be determined safely
+and callers must fail closed.
 
 Because an older Launchpad artifact does not carry reliable Git commit
 provenance, recovery never attributes it to a newer current commit. It records
@@ -58,6 +60,7 @@ done
 repo_root="$(git rev-parse --show-toplevel)"
 release_state_ref="refs/remotes/origin/release-state"
 verified_commit_path="state/latest-${CHANNEL}-commit.txt"
+failed_release_path="state/failed-${CHANNEL}.json"
 
 if ! git -C "$repo_root" cat-file -e "${release_state_ref}:${verified_commit_path}" 2>/dev/null; then
   echo "Cannot recover ${CHANNEL}: missing verified release-state commit marker." >&2
@@ -75,6 +78,20 @@ fi
 if ! git -C "$repo_root" merge-base --is-ancestor "$verified_commit" "$COMMIT"; then
   echo "Cannot recover ${CHANNEL}: verified commit $verified_commit is not an ancestor of current commit $COMMIT" >&2
   exit 1
+fi
+
+# A revision that release-state already records as terminally failed must not
+# be recovered again after release-input changes authorize a superseding
+# upload. The workflow's failed-state gate runs before this helper, so reaching
+# this path for the same failed tag/revision means a newer revision is allowed.
+if git -C "$repo_root" cat-file -e "${release_state_ref}:${failed_release_path}" 2>/dev/null; then
+  failed_state="$(git -C "$repo_root" show "${release_state_ref}:${failed_release_path}")"
+  failed_tag="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag", ""))' <<<"$failed_state")"
+  failed_revision="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("revision", ""))' <<<"$failed_state")"
+  if [[ "$failed_tag" == "$TAG" && "$failed_revision" == "$REVISION" ]]; then
+    echo "Recovery skipped for ${CHANNEL} ${TAG} ppa${REVISION}: release-state already records this revision as terminally failed." >&2
+    exit 3
+  fi
 fi
 
 if [[ "$verified_commit" == "$COMMIT" ]]; then
