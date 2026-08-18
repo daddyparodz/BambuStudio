@@ -367,6 +367,7 @@ jobs:
           echo "skip=$skip" >> "$GITHUB_OUTPUT"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
           echo "recover=$recover" >> "$GITHUB_OUTPUT"
+          echo "series_list=$series_list" >> "$GITHUB_OUTPUT"
 
       - name: Enforce pre-upload PPA retention
         id: preupload_retention
@@ -375,6 +376,7 @@ jobs:
           LAUNCHPAD_CREDENTIALS: ${{ secrets.LAUNCHPAD_CREDENTIALS }}
           RETENTION_VERSIONS: ${{ inputs.retention_versions }}
           CHANNEL: ${{ steps.upstream.outputs.channel }}
+          RESERVE_SERIES: ${{ steps.state.outputs.series_list }}
         run: |
           set -euo pipefail
           if [[ "$CHANNEL" == "beta" ]]; then
@@ -383,13 +385,20 @@ jobs:
             source_package_name="bambustudio"
           fi
 
+          reserve_args=(--reserve-package "$source_package_name")
+          read -r -a selected_series <<< "$RESERVE_SERIES"
+          (( ${#selected_series[@]} > 0 )) || { echo "No resolved Ubuntu series available for retention reservation." >&2; exit 1; }
+          for series in "${selected_series[@]}"; do
+            reserve_args+=(--reserve-series "$series")
+          done
+
           result="$(mktemp)"
           bash ./scripts/prune-ppa.sh \
             --owner daddyparodz \
             --archive bambustudio \
             --package bambustudio \
             --package bambustudio-beta \
-            --reserve-package "$source_package_name" \
+            "${reserve_args[@]}" \
             --keep-versions "$RETENTION_VERSIONS" \
             --result-json "$result"
           jq . "$result"
