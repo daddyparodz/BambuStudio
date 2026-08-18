@@ -90,12 +90,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Trust workspace and fetch release state
+      - name: Trust workspace
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git fetch --no-tags origin release-state:refs/remotes/origin/release-state
           git status --short
-          git show-ref --verify refs/remotes/origin/release-state
 
       - name: Determine upstream tag
         id: upstream
@@ -137,19 +135,9 @@ jobs:
           marker_file="state/latest-${channel}-tag.txt"
           commit_file="state/latest-${channel}-commit.txt"
           revision_file="state/latest-${channel}-revision.txt"
-
-          read_release_state() {
-            local path="$1"
-            if ! git cat-file -e "refs/remotes/origin/release-state:${path}" 2>/dev/null; then
-              echo "Missing release-state marker: ${path}" >&2
-              return 1
-            fi
-            git show "refs/remotes/origin/release-state:${path}" | tr -d '\n'
-          }
-
-          recorded_tag="$(read_release_state "$marker_file")"
-          recorded_commit="$(read_release_state "$commit_file")"
-          recorded_revision="$(read_release_state "$revision_file")"
+          recorded_tag="$(tr -d '\n' < "$marker_file" || true)"
+          recorded_commit="$(tr -d '\n' < "$commit_file" || true)"
+          recorded_revision="$(tr -d '\n' < "$revision_file" || true)"
           current_tag="${{ steps.upstream.outputs.tag }}"
           upstream_version="${current_tag#v}"
           current_commit="${{ github.sha }}"
@@ -164,8 +152,7 @@ jobs:
           fi
 
           if [[ ! "$recorded_revision" =~ ^[0-9]+$ ]]; then
-            echo "Invalid recorded release revision on release-state: $recorded_revision" >&2
-            exit 1
+            recorded_revision=1
           fi
 
           if ! archive_max_revision="$(
@@ -324,18 +311,6 @@ jobs:
           marker_file="state/latest-${channel}-tag.txt"
           commit_file="state/latest-${channel}-commit.txt"
           revision_file="state/latest-${channel}-revision.txt"
-          state_worktree="$(mktemp -d)"
-          rmdir "$state_worktree"
-
-          cleanup_state_worktree() {
-            git worktree remove --force "$state_worktree" >/dev/null 2>&1 || true
-          }
-          trap cleanup_state_worktree EXIT
-
-          git fetch --no-tags origin release-state:refs/remotes/origin/release-state
-          git worktree add -B release-state "$state_worktree" refs/remotes/origin/release-state
-
-          pushd "$state_worktree" >/dev/null
           printf '%s\n' "${{ steps.upstream.outputs.tag }}" > "$marker_file"
           printf '%s\n' "${{ github.sha }}" > "$commit_file"
           printf '%s\n' "${{ steps.state.outputs.revision }}" > "$revision_file"
@@ -343,22 +318,20 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$marker_file" "$commit_file" "$revision_file"
           if git diff --cached --quiet; then
-            echo "Release-state branch already records this release; nothing to commit."
-            popd >/dev/null
+            echo "Release marker already records this state; nothing to commit."
             exit 0
           fi
           git commit -m "chore: record ${{ steps.upstream.outputs.channel }} packaged release ${{ steps.upstream.outputs.tag }}-0ppa${{ steps.state.outputs.revision }}"
           for attempt in 1 2 3; do
-            if git pull --rebase origin release-state && git push origin HEAD:release-state; then
+            if git pull --rebase origin main && git push origin HEAD:main; then
               break
             fi
             if [[ "$attempt" -eq 3 ]]; then
-              echo "Release-state push failed after retries." >&2
+              echo "Marker push failed after retries." >&2
               exit 1
             fi
             sleep 5
           done
-          popd >/dev/null
 
       - name: Cleanup old workflow artifacts
         if: always()
