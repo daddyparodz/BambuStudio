@@ -75,6 +75,9 @@ jobs:
       image: ubuntu:24.04
       env:
         DEBIAN_FRONTEND: noninteractive
+    defaults:
+      run:
+        shell: bash
     outputs:
       cleanup_pending: ${{ steps.retention.outputs.cleanup_pending }}
       deletion_requests: ${{ steps.retention.outputs.deletion_requests }}
