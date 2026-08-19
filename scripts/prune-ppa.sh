@@ -8,15 +8,23 @@ DRY_RUN="false"
 KEEP_VERSIONS="3"
 RESULT_JSON=""
 declare -a PACKAGES=()
+declare -a RESERVE_PACKAGES=()
+declare -a RESERVE_SERIES=()
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: prune-ppa.sh --owner <owner> --archive <archive> --package <name> [--package <name> ...] [--keep-versions <count>] [--result-json <path>] [--app-name <name>] [--dry-run]
+Usage: prune-ppa.sh --owner <owner> --archive <archive> --package <name> [--package <name> ...] [--reserve-package <name> ...] [--reserve-series <series> ...] [--keep-versions <count>] [--result-json <path>] [--app-name <name>] [--dry-run]
 
-Keeps the newest N Debian source versions for each package and Ubuntu series,
-considering both Published and Superseded Launchpad publications. Older source
-publications are explicitly scheduled for deletion, which also removes binaries
-built from those sources.
+Keeps at most the newest N Debian source versions for each package and Ubuntu
+series. For packages named with --reserve-package, one retention slot is kept
+free for the impending upload, so only N-1 existing active versions are kept.
+When --reserve-series is supplied, that reservation applies only to those Ubuntu
+series; otherwise it applies to every series for the reserved package.
+Published and Superseded publications outside the retention window are
+explicitly scheduled for deletion. Deleted publication history is considered
+cleanup-pending while Launchpad exposes a scheduled deletion date for that
+publication; terminal Deleted history without a deletion schedule does not
+block later uploads.
 
 Requires:
   - python3-launchpadlib installed
@@ -42,6 +50,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --package)
       PACKAGES+=("${2:-}")
+      shift 2
+      ;;
+    --reserve-package)
+      RESERVE_PACKAGES+=("${2:-}")
+      shift 2
+      ;;
+    --reserve-series)
+      RESERVE_SERIES+=("${2:-}")
       shift 2
       ;;
     --keep-versions)
@@ -75,6 +91,21 @@ done
 (( ${#PACKAGES[@]} > 0 )) || usage
 [[ "$KEEP_VERSIONS" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --keep-versions value: $KEEP_VERSIONS" >&2; exit 2; }
 command -v dpkg >/dev/null 2>&1 || { echo "dpkg is required" >&2; exit 2; }
+
+for reserve_pkg in "${RESERVE_PACKAGES[@]}"; do
+  found=false
+  for pkg in "${PACKAGES[@]}"; do
+    if [[ "$reserve_pkg" == "$pkg" ]]; then
+      found=true
+      break
+    fi
+  done
+  [[ "$found" == "true" ]] || { echo "--reserve-package must also be listed with --package: $reserve_pkg" >&2; exit 2; }
+done
+
+for series in "${RESERVE_SERIES[@]}"; do
+  [[ -n "$series" && "$series" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Invalid --reserve-series value: $series" >&2; exit 2; }
+done
 
 resolve_credentials_file() {
   if [[ -n "${LAUNCHPAD_CREDENTIALS:-}" ]]; then
@@ -138,9 +169,29 @@ for pkg in "${PACKAGES[@]}"; do
   fi
 done
 
+reserve_packages_csv=""
+for pkg in "${RESERVE_PACKAGES[@]}"; do
+  if [[ -z "$reserve_packages_csv" ]]; then
+    reserve_packages_csv="$pkg"
+  else
+    reserve_packages_csv="$reserve_packages_csv,$pkg"
+  fi
+done
+
+reserve_series_csv=""
+for series in "${RESERVE_SERIES[@]}"; do
+  if [[ -z "$reserve_series_csv" ]]; then
+    reserve_series_csv="$series"
+  else
+    reserve_series_csv="$reserve_series_csv,$series"
+  fi
+done
+
 export PRUNE_OWNER="$OWNER"
 export PRUNE_ARCHIVE="$ARCHIVE"
 export PRUNE_PACKAGES_CSV="$packages_csv"
+export PRUNE_RESERVE_PACKAGES_CSV="$reserve_packages_csv"
+export PRUNE_RESERVE_SERIES_CSV="$reserve_series_csv"
 export PRUNE_APP_NAME="$APP_NAME"
 export PRUNE_DRY_RUN="$DRY_RUN"
 export PRUNE_KEEP_VERSIONS="$KEEP_VERSIONS"
@@ -197,6 +248,8 @@ def scheduled_deletion(pub):
 owner = os.environ["PRUNE_OWNER"]
 archive = os.environ["PRUNE_ARCHIVE"]
 packages = [p for p in os.environ["PRUNE_PACKAGES_CSV"].split(",") if p]
+reserve_packages = {p for p in os.environ.get("PRUNE_RESERVE_PACKAGES_CSV", "").split(",") if p}
+reserve_series = {s for s in os.environ.get("PRUNE_RESERVE_SERIES_CSV", "").split(",") if s}
 app_name = os.environ["PRUNE_APP_NAME"]
 dry_run = os.environ["PRUNE_DRY_RUN"] == "true"
 keep_versions = int(os.environ["PRUNE_KEEP_VERSIONS"])
@@ -214,14 +267,15 @@ ppa = lp.people[owner].getPPAByName(name=archive)
 status_priority = {"Published": 2, "Superseded": 1}
 deleted = 0
 already_scheduled = 0
-cleanup_pending = 0
+pending_deleted = 0
+terminal_deleted = 0
 excess_publications = 0
 retained = {}
 
 for pkg in packages:
-    publications = []
+    active_publications = []
     for status in ("Published", "Superseded"):
-        publications.extend(
+        active_publications.extend(
             list(
                 ppa.getPublishedSources(
                     source_name=pkg,
@@ -232,13 +286,40 @@ for pkg in packages:
             )
         )
 
-    if not publications:
+    deleted_publications = list(
+        ppa.getPublishedSources(
+            source_name=pkg,
+            exact_match=True,
+            status="Deleted",
+            order_by_date=True,
+        )
+    )
+    seen_deleted = set()
+    for pub in deleted_publications:
+        key = str(getattr(pub, "self_link", "") or "") or (
+            series_name(pub),
+            str(getattr(pub, "source_package_version", "") or ""),
+        )
+        if key in seen_deleted:
+            continue
+        seen_deleted.add(key)
+        scheduled = scheduled_deletion(pub)
+        if not scheduled:
+            terminal_deleted += 1
+            continue
+        pending_deleted += 1
+        print(
+            f"{pkg}/{series_name(pub)}: waiting for Launchpad archive deletion scheduled at "
+            f"{scheduled} for {getattr(pub, 'source_package_version', '<unknown>')}"
+        )
+
+    if not active_publications:
         print(f"{pkg}: no Published/Superseded sources found")
         retained[pkg] = {}
         continue
 
     by_series = defaultdict(dict)
-    for pub in publications:
+    for pub in active_publications:
         series = series_name(pub)
         version = str(getattr(pub, "source_package_version", "") or "")
         if not version:
@@ -248,27 +329,40 @@ for pkg in packages:
             by_series[series][version] = pub
 
     retained[pkg] = {}
+    if pkg in reserve_packages:
+        scope = ", ".join(sorted(reserve_series)) if reserve_series else "all series"
+        print(
+            f"{pkg}: reserving one of {keep_versions} retention slots for the impending upload "
+            f"in {scope}"
+        )
+
     for series, version_map in sorted(by_series.items()):
+        reserve_for_series = pkg in reserve_packages and (
+            not reserve_series or series in reserve_series
+        )
+        effective_keep = keep_versions - (1 if reserve_for_series else 0)
+        effective_keep = max(0, effective_keep)
         versions = sorted(
             version_map,
             key=functools.cmp_to_key(debian_version_compare),
             reverse=True,
         )
-        keep = versions[:keep_versions]
-        drop = versions[keep_versions:]
+        keep = versions[:effective_keep]
+        drop = versions[effective_keep:]
         retained[pkg][series] = keep
 
         if keep:
-            print(f"{pkg}/{series}: keeping newest {len(keep)} version(s): {', '.join(keep)}")
+            print(f"{pkg}/{series}: keeping newest {len(keep)} existing version(s): {', '.join(keep)}")
+        elif reserve_for_series:
+            print(f"{pkg}/{series}: no existing versions retained before upload")
         else:
-            print(f"{pkg}/{series}: no versions retained")
+            print(f"{pkg}/{series}: no existing versions retained")
 
         for version in drop:
             pub = version_map[version]
             status = publication_status(pub)
             scheduled = scheduled_deletion(pub)
             excess_publications += 1
-            cleanup_pending += 1
 
             if dry_run:
                 schedule_note = f" scheduled={scheduled}" if scheduled else ""
@@ -283,11 +377,17 @@ for pkg in packages:
             else:
                 print(f"{pkg}/{series}: deleting {version} status={status}")
 
+            retention_scope = (
+                ", including one slot reserved for the impending upload"
+                if reserve_for_series
+                else ""
+            )
             try:
                 pub.requestDeletion(
                     removal_comment=(
-                        "Automated PPA retention policy: keep only the newest "
-                        f"{keep_versions} source version(s) for {pkg} in Ubuntu {series}."
+                        "Automated PPA retention policy: keep at most "
+                        f"{keep_versions} source version(s) for {pkg} in Ubuntu {series}"
+                        f"{retention_scope}."
                     )
                 )
                 deleted += 1
@@ -301,16 +401,21 @@ for pkg in packages:
                     continue
                 raise
 
+cleanup_pending = excess_publications > 0 or pending_deleted > 0
 summary = {
     "schema": 1,
     "archive": f"ppa:{owner}/{archive}",
     "keep_versions": keep_versions,
+    "reserve_packages": sorted(reserve_packages),
+    "reserve_series": sorted(reserve_series),
     "packages": packages,
     "dry_run": dry_run,
     "deletion_requests": deleted,
     "already_scheduled": already_scheduled,
+    "pending_deleted": pending_deleted,
+    "terminal_deleted": terminal_deleted,
     "excess_publications": excess_publications,
-    "cleanup_pending": cleanup_pending > 0,
+    "cleanup_pending": cleanup_pending,
     "retained": retained,
 }
 print(json.dumps(summary, indent=2, sort_keys=True))
@@ -322,7 +427,8 @@ if result_json:
 
 print(
     f"Done. deletion requests sent: {deleted}; already scheduled: {already_scheduled}; "
-    f"cleanup pending: {cleanup_pending > 0}"
+    f"deleted publications still scheduled: {pending_deleted}; terminal deleted history: "
+    f"{terminal_deleted}; cleanup pending: {cleanup_pending}"
 )
 sys.exit(0)
 PY
