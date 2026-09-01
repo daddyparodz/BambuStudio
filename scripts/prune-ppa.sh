@@ -204,9 +204,11 @@ import os
 import pathlib
 import subprocess
 import sys
+import time
 from collections import defaultdict
 
 from launchpadlib.launchpad import Launchpad
+from lazr.restfulclient.errors import ServerError
 
 
 def debian_version_compare(left, right):
@@ -227,11 +229,40 @@ def debian_version_compare(left, right):
     raise RuntimeError(f"Could not compare Debian versions: {left!r} and {right!r}")
 
 
+def retry_launchpad_read(label, operation, attempts=4):
+    for attempt in range(1, attempts + 1):
+        try:
+            return operation()
+        except ServerError as exc:
+            if attempt == attempts:
+                raise
+            delay = 2 ** (attempt - 1)
+            print(
+                f"Launchpad read failed for {label} (attempt {attempt}/{attempts}): "
+                f"{exc}; retrying in {delay}s",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+
+
 def series_name(pub):
-    series = getattr(pub, "distro_series", None)
+    series = retry_launchpad_read(
+        "publication distro_series",
+        lambda: getattr(pub, "distro_series", None),
+    )
     if series is None:
         return "unknown"
-    return str(getattr(series, "name", "") or getattr(series, "self_link", "") or "unknown")
+    return str(
+        retry_launchpad_read(
+            "distro series name",
+            lambda: getattr(series, "name", ""),
+        )
+        or retry_launchpad_read(
+            "distro series self_link",
+            lambda: getattr(series, "self_link", ""),
+        )
+        or "unknown"
+    )
 
 
 def publication_status(pub):
