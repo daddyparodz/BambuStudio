@@ -276,6 +276,20 @@ def scheduled_deletion(pub):
     )
 
 
+def get_published_sources(ppa, pkg, status):
+    return retry_launchpad_read(
+        f"{pkg} {status} source publications",
+        lambda: list(
+            ppa.getPublishedSources(
+                source_name=pkg,
+                exact_match=True,
+                status=status,
+                order_by_date=True,
+            )
+        ),
+    )
+
+
 owner = os.environ["PRUNE_OWNER"]
 archive = os.environ["PRUNE_ARCHIVE"]
 packages = [p for p in os.environ["PRUNE_PACKAGES_CSV"].split(",") if p]
@@ -293,7 +307,10 @@ lp = Launchpad.login_with(
     version="devel",
     credentials_file=credentials_file,
 )
-ppa = lp.people[owner].getPPAByName(name=archive)
+ppa = retry_launchpad_read(
+    "PPA lookup",
+    lambda: lp.people[owner].getPPAByName(name=archive),
+)
 
 status_priority = {"Published": 2, "Superseded": 1}
 deleted = 0
@@ -306,25 +323,9 @@ retained = {}
 for pkg in packages:
     active_publications = []
     for status in ("Published", "Superseded"):
-        active_publications.extend(
-            list(
-                ppa.getPublishedSources(
-                    source_name=pkg,
-                    exact_match=True,
-                    status=status,
-                    order_by_date=True,
-                )
-            )
-        )
+        active_publications.extend(get_published_sources(ppa, pkg, status))
 
-    deleted_publications = list(
-        ppa.getPublishedSources(
-            source_name=pkg,
-            exact_match=True,
-            status="Deleted",
-            order_by_date=True,
-        )
-    )
+    deleted_publications = get_published_sources(ppa, pkg, "Deleted")
     seen_deleted = set()
     for pub in deleted_publications:
         key = str(getattr(pub, "self_link", "") or "") or (
